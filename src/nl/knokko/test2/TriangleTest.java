@@ -33,9 +33,13 @@ import org.lwjgl.vulkan.VkImageViewCreateInfo;
 import org.lwjgl.vulkan.VkInstance;
 import org.lwjgl.vulkan.VkInstanceCreateInfo;
 import org.lwjgl.vulkan.VkLayerProperties;
+import org.lwjgl.vulkan.VkMemoryAllocateInfo;
+import org.lwjgl.vulkan.VkMemoryRequirements;
+import org.lwjgl.vulkan.VkMemoryType;
 import org.lwjgl.vulkan.VkOffset2D;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.lwjgl.vulkan.VkPhysicalDeviceFeatures;
+import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
 import org.lwjgl.vulkan.VkPipelineColorBlendAttachmentState;
 import org.lwjgl.vulkan.VkPipelineColorBlendStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineInputAssemblyStateCreateInfo;
@@ -151,6 +155,7 @@ public class TriangleTest {
 	boolean framebufferResized = false;
 	
 	long vertexBuffer;
+	long vertexBufferMemory;
 
 	void run() {
 
@@ -930,10 +935,11 @@ public class TriangleTest {
 	}
 	
 	void createVertexBuffers() {
+		int byteSize = VERTICES.length * Vertex.BYTES;
 		try (MemoryStack stack = stackPush()) {
 			VkBufferCreateInfo bufferCI = VkBufferCreateInfo.callocStack(stack);
 			bufferCI.sType(VK10.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
-			bufferCI.size(VERTICES.length * Vertex.SIZE);
+			bufferCI.size(byteSize);
 			bufferCI.usage(VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 			bufferCI.sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE);
 			
@@ -941,6 +947,30 @@ public class TriangleTest {
 			validate(VK10.vkCreateBuffer(device, bufferCI, null, resultBuffer));
 			vertexBuffer = resultBuffer.get(0);
 		}
+		try (MemoryStack stack = stackPush()) {
+			VkMemoryRequirements memRequirements = VkMemoryRequirements.callocStack(stack);
+			VK10.vkGetBufferMemoryRequirements(device, vertexBuffer, memRequirements);
+			
+			VkMemoryAllocateInfo memoryAI = VkMemoryAllocateInfo.callocStack(stack);
+			memoryAI.sType(VK10.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+			memoryAI.allocationSize(memRequirements.size());
+			memoryAI.memoryTypeIndex(findMemoryType(memRequirements.memoryTypeBits(), VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+			
+			LongBuffer resultBuffer = stack.callocLong(1);
+			validate(VK10.vkAllocateMemory(device, memoryAI, null, resultBuffer));
+			vertexBufferMemory = resultBuffer.get(0);
+		}
+		validate(VK10.vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0));
+		
+		try (MemoryStack stack = stackPush()){
+			PointerBuffer resultPointerBuffer = stack.callocPointer(1);
+			validate(VK10.vkMapMemory(device, vertexBufferMemory, 0, byteSize, 0, resultPointerBuffer));
+			long resultPointer = resultPointerBuffer.get(0);
+			FloatBuffer resultBuffer = MemoryUtil.memFloatBuffer(resultPointer, VERTICES.length * Vertex.FLOATS);
+			for (int vertexIndex = 0; vertexIndex < VERTICES.length; vertexIndex++)
+				VERTICES[vertexIndex].put(resultBuffer, vertexIndex * Vertex.FLOATS);
+		}
+		VK10.vkUnmapMemory(device, vertexBufferMemory);
 	}
 
 	void createCommandBuffers() {
@@ -980,8 +1010,10 @@ public class TriangleTest {
 				VK10.vkCmdBeginRenderPass(commandBuffer, renderPassBI, VK10.VK_SUBPASS_CONTENTS_INLINE);
 
 				VK10.vkCmdBindPipeline(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+				
+				VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0));
 
-				VK10.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+				VK10.vkCmdDraw(commandBuffer, VERTICES.length, 1, 0, 0);
 
 				VK10.vkCmdEndRenderPass(commandBuffer);
 
@@ -1027,19 +1059,32 @@ public class TriangleTest {
 	
 	static class Vertex {
 		
-		static final int SIZE = 2 * 4 + 3 * 4;
+		static final int FLOATS = 2 + 3;
+		static final int BYTES = FLOATS * 4;
 		
-		//vec2 pos;
-		//vec3 color;
+		float x,y;
+		float red,green,blue;
 		
-		Vertex(float...posAndColor){
-			// TODO set pos and color once you know the right type
+		Vertex(float x, float y, float red, float green, float blue){
+			this.x = x;
+			this.y = y;
+			this.red = red;
+			this.green = green;
+			this.blue = blue;
+		}
+		
+		void put(FloatBuffer dest, int index) {
+			dest.put(index, x);
+			dest.put(index + 1, y);
+			dest.put(index + 2, red);
+			dest.put(index + 3, green);
+			dest.put(index + 4, blue);
 		}
 		
 		static VkVertexInputBindingDescription.Buffer getBindingDescription(MemoryStack stack) {
 			VkVertexInputBindingDescription description = VkVertexInputBindingDescription.callocStack(stack);
 			description.binding(0);
-			description.stride(SIZE);
+			description.stride(Vertex.BYTES);
 			description.inputRate(VK10.VK_VERTEX_INPUT_RATE_VERTEX);
 			return VkVertexInputBindingDescription.callocStack(1, stack).put(0, description);
 		}
@@ -1145,6 +1190,24 @@ public class TriangleTest {
 
 			System.out.println("The graphics queue has become " + graphicsQueue + " and the present queue has become "
 					+ presentQueue);
+		}
+	}
+	
+	int findMemoryType(int typeFilter, int properties) {
+		try (MemoryStack stack = stackPush()) {
+			VkPhysicalDeviceMemoryProperties memProps = VkPhysicalDeviceMemoryProperties.callocStack(stack);
+			VK10.vkGetPhysicalDeviceMemoryProperties(physicalDevice, memProps);
+			int memoryTypeCount = memProps.memoryTypeCount();
+			for (int index = 0; index < memoryTypeCount; index++) {
+				if ((typeFilter & (1 << index)) != 0) {
+					VkMemoryType currentType = memProps.memoryTypes(index);
+					if ((currentType.propertyFlags() & properties) == properties) {
+						return index;
+					}
+				}
+			}
+			
+			throw new UnsupportedOperationException("No suitable memory type found");
 		}
 	}
 
@@ -1278,6 +1341,7 @@ public class TriangleTest {
 	void cleanUp() {
 		cleanupSwapchain();
 		VK10.vkDestroyBuffer(device, vertexBuffer, null);
+		VK10.vkFreeMemory(device, vertexBufferMemory, null);
 		MemoryUtil.memFree(swapchainImages);
 		for (int index = 0; index < MAX_FRAMES_IN_FLIGHT; index++) {
 			VK10.vkDestroySemaphore(device, renderFinishedSemaphores[index], null);
