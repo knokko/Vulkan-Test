@@ -1,4 +1,4 @@
-package nl.knokko.test2;
+package nl.knokko.test3;
 
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWVulkan;
@@ -11,6 +11,7 @@ import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkApplicationInfo;
 import org.lwjgl.vulkan.VkAttachmentDescription;
 import org.lwjgl.vulkan.VkAttachmentReference;
+import org.lwjgl.vulkan.VkBufferCopy;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkClearValue;
@@ -82,6 +83,7 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
+import java.nio.ShortBuffer;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -114,8 +116,7 @@ public class TriangleTest {
 		TriangleTest triTest = new TriangleTest();
 		triTest.run();
 
-		// TODO Left at vertex buffers/vertex buffer creation
-		// section Memory requirements
+		// TODO Left at vertex buffers/index buffer
 	}
 
 	long window;
@@ -156,10 +157,12 @@ public class TriangleTest {
 	
 	long vertexBuffer;
 	long vertexBufferMemory;
+	long indexBuffer;
+	long indexBufferMemory;
 
 	void run() {
 
-		Performance.disable();
+		//Performance.disable();
 		initWindow();
 		initVulkan();
 		mainLoop();
@@ -180,7 +183,7 @@ public class TriangleTest {
 	}
 
 	void initVulkan() {
-		next("create vulkan instance");
+		//next("create vulkan instance"); Disabled because this part is more detailed
 		createInstance();
 		next("setup debug messenger");
 		setupDebugMessenger();
@@ -204,6 +207,8 @@ public class TriangleTest {
 		createCommandPool();
 		next("create vertex buffers");
 		createVertexBuffers();
+		next("create index buffers");
+		createIndexBuffers();
 		next("create command buffers");
 		createCommandBuffers();
 		next("create semaphores");
@@ -306,7 +311,6 @@ public class TriangleTest {
 			createInfo.sType(VK10.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO);
 			createInfo.pApplicationInfo(appInfo);
 
-			// TODO This check appears to take 700 ms, so is it really necessary?
 			next("createInstance call glfwVulkanSupported()");
 			if (!GLFWVulkan.glfwVulkanSupported()) {
 				throw new UnsupportedOperationException("Vulkan is not supported");
@@ -934,43 +938,133 @@ public class TriangleTest {
 		}
 	}
 	
-	void createVertexBuffers() {
-		int byteSize = VERTICES.length * Vertex.BYTES;
+	void createBuffer(long byteSize, int usage, int properties, LongBuffer buffer, LongBuffer bufferMemory) {
 		try (MemoryStack stack = stackPush()) {
 			VkBufferCreateInfo bufferCI = VkBufferCreateInfo.callocStack(stack);
 			bufferCI.sType(VK10.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
 			bufferCI.size(byteSize);
-			bufferCI.usage(VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+			bufferCI.usage(usage);
 			bufferCI.sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE);
 			
-			LongBuffer resultBuffer = stack.callocLong(1);
-			validate(VK10.vkCreateBuffer(device, bufferCI, null, resultBuffer));
-			vertexBuffer = resultBuffer.get(0);
+			validate(VK10.vkCreateBuffer(device, bufferCI, null, buffer));
 		}
 		try (MemoryStack stack = stackPush()) {
 			VkMemoryRequirements memRequirements = VkMemoryRequirements.callocStack(stack);
-			VK10.vkGetBufferMemoryRequirements(device, vertexBuffer, memRequirements);
+			VK10.vkGetBufferMemoryRequirements(device, buffer.get(0), memRequirements);
 			
 			VkMemoryAllocateInfo memoryAI = VkMemoryAllocateInfo.callocStack(stack);
 			memoryAI.sType(VK10.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
 			memoryAI.allocationSize(memRequirements.size());
-			memoryAI.memoryTypeIndex(findMemoryType(memRequirements.memoryTypeBits(), VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+			memoryAI.memoryTypeIndex(findMemoryType(memRequirements.memoryTypeBits(), properties));
 			
-			LongBuffer resultBuffer = stack.callocLong(1);
-			validate(VK10.vkAllocateMemory(device, memoryAI, null, resultBuffer));
-			vertexBufferMemory = resultBuffer.get(0);
+			// TODO Notice that this function should be used to create few big buffers rather than many small
+			validate(VK10.vkAllocateMemory(device, memoryAI, null, bufferMemory));
 		}
-		validate(VK10.vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0));
+		validate(VK10.vkBindBufferMemory(device, buffer.get(0), bufferMemory.get(0), 0));
+	}
+	
+	void createVertexBuffers() {
+		int byteSize = VERTICES.length * Vertex.BYTES;
 		
 		try (MemoryStack stack = stackPush()){
-			PointerBuffer resultPointerBuffer = stack.callocPointer(1);
-			validate(VK10.vkMapMemory(device, vertexBufferMemory, 0, byteSize, 0, resultPointerBuffer));
-			long resultPointer = resultPointerBuffer.get(0);
-			FloatBuffer resultBuffer = MemoryUtil.memFloatBuffer(resultPointer, VERTICES.length * Vertex.FLOATS);
+			LongBuffer stagingBuffer = stack.callocLong(1);
+			LongBuffer stagingBufferMemory = stack.callocLong(1);
+			createBuffer(byteSize, VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+					VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+					stagingBuffer, stagingBufferMemory);
+			
+			PointerBuffer ppData = stack.callocPointer(1);
+			validate(VK10.vkMapMemory(device, stagingBufferMemory.get(0), 0, byteSize, 0, ppData));
+			
+			FloatBuffer resultBuffer = MemoryUtil.memFloatBuffer(ppData.get(0), VERTICES.length * Vertex.FLOATS);
 			for (int vertexIndex = 0; vertexIndex < VERTICES.length; vertexIndex++)
 				VERTICES[vertexIndex].put(resultBuffer, vertexIndex * Vertex.FLOATS);
+			
+			VK10.vkUnmapMemory(device, stagingBufferMemory.get(0));
+			
+			LongBuffer pVertexBuffer = stack.callocLong(1);
+			LongBuffer pVertexBufferMemory = stack.callocLong(1);
+			createBuffer(byteSize, VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
+					VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pVertexBuffer, pVertexBufferMemory);
+			vertexBuffer = pVertexBuffer.get(0);
+			vertexBufferMemory = pVertexBufferMemory.get(0);
+			
+			copyBuffer(stagingBuffer.get(0), vertexBuffer, byteSize);
+			
+			VK10.vkDestroyBuffer(device, stagingBuffer.get(0), null);
+			VK10.vkFreeMemory(device, stagingBufferMemory.get(0), null);
 		}
-		VK10.vkUnmapMemory(device, vertexBufferMemory);
+	}
+	
+	void createIndexBuffers() {
+		int byteSize = INDEX_TYPE_SIZE * INDICES.length;
+		
+		try (MemoryStack stack = stackPush()){
+			LongBuffer pStagingBuffer = stack.callocLong(1);
+			LongBuffer pStagingBufferMemory = stack.callocLong(1);
+			createBuffer(byteSize, VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+					VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+					pStagingBuffer, pStagingBufferMemory);
+			long stagingBufferMemory = pStagingBufferMemory.get(0);
+			long stagingBuffer = pStagingBuffer.get(0);
+			
+			PointerBuffer ppData = stack.callocPointer(1);
+			validate(VK10.vkMapMemory(device, stagingBufferMemory, 0, byteSize, 0, ppData));
+			
+			ShortBuffer memoryBuffer = MemoryUtil.memByteBuffer(ppData.get(0), byteSize).asShortBuffer();
+			memoryBuffer.put(INDICES).flip();
+			VK10.vkUnmapMemory(device, stagingBufferMemory);
+			
+			LongBuffer pIndexBuffer = stack.callocLong(1);
+			LongBuffer pIndexBufferMemory = stack.callocLong(1);
+			createBuffer(byteSize, VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pIndexBuffer, pIndexBufferMemory);
+			indexBuffer = pIndexBuffer.get(0);
+			indexBufferMemory = pIndexBufferMemory.get(0);
+			
+			copyBuffer(stagingBuffer, indexBuffer, byteSize);
+			
+			VK10.vkDestroyBuffer(device, stagingBuffer, null);
+			VK10.vkFreeMemory(device, stagingBufferMemory, null);
+		}
+	}
+	
+	void copyBuffer(long source, long dest, long byteSize) {
+		try (MemoryStack stack = stackPush()){
+			VkCommandBufferAllocateInfo commandBufferAI = VkCommandBufferAllocateInfo.callocStack(stack);
+			commandBufferAI.sType(VK10.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO);
+			commandBufferAI.level(VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+			commandBufferAI.commandPool(commandPool);
+			commandBufferAI.commandBufferCount(1);
+			
+			PointerBuffer pCommandBuffer = stack.callocPointer(1);
+			validate(VK10.vkAllocateCommandBuffers(device, commandBufferAI, pCommandBuffer));
+			
+			VkCommandBufferBeginInfo commandBufferBI = VkCommandBufferBeginInfo.callocStack(stack);
+			commandBufferBI.sType(VK10.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
+			commandBufferBI.flags(VK10.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+			
+			VkCommandBuffer commandBuffer = new VkCommandBuffer(pCommandBuffer.get(0), device);
+			validate(VK10.vkBeginCommandBuffer(commandBuffer, commandBufferBI));
+			
+			VkBufferCopy copyRegion = VkBufferCopy.callocStack(stack);
+			copyRegion.srcOffset(0);
+			copyRegion.dstOffset(0);
+			copyRegion.size(byteSize);
+			
+			VK10.vkCmdCopyBuffer(commandBuffer, source, dest, VkBufferCopy.callocStack(1, stack).put(0, copyRegion));
+			
+			validate(VK10.vkEndCommandBuffer(commandBuffer));
+			
+			VkSubmitInfo submitInfo = VkSubmitInfo.callocStack(stack);
+			submitInfo.sType(VK10.VK_STRUCTURE_TYPE_SUBMIT_INFO);
+			submitInfo.pCommandBuffers(pCommandBuffer);
+			
+			// TODO Could use a fence instead of just waiting
+			validate(VK10.vkQueueSubmit(graphicsQueue, submitInfo, VK_NULL_HANDLE));
+			validate(VK10.vkQueueWaitIdle(graphicsQueue));
+			
+			VK10.vkFreeCommandBuffers(device, commandPool, pCommandBuffer);
+		}
 	}
 
 	void createCommandBuffers() {
@@ -1011,9 +1105,12 @@ public class TriangleTest {
 
 				VK10.vkCmdBindPipeline(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 				
+				// TODO It is recommended to use the offsets to store multiple models in the same buffer
 				VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0));
+				
+				VK10.vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK10.VK_INDEX_TYPE_UINT16);
 
-				VK10.vkCmdDraw(commandBuffer, VERTICES.length, 1, 0, 0);
+				VK10.vkCmdDrawIndexed(commandBuffer, INDICES.length, 1, 0, 0, 0);
 
 				VK10.vkCmdEndRenderPass(commandBuffer);
 
@@ -1111,10 +1208,18 @@ public class TriangleTest {
 	}
 	
 	static final Vertex[] VERTICES = {
-			new Vertex(0f,-0.5f, 1f,0f,0f),
-			new Vertex(0.5f,0.5f, 0f,1f,0f),
-			new Vertex(-0.5f,0.5f, 0f,0f,1f)
+			new Vertex(-0.5f,-0.5f, 1f,0f,0f),
+			new Vertex(0.5f,-0.5f, 0f,1f,0f),
+			new Vertex(0.5f,0.5f, 0f,0f,1f),
+			new Vertex(-0.5f,0.5f, 1f,1f,1f)
 	};
+	
+	static final short[] INDICES = {
+			0,1,2,
+			2,3,0
+	};
+	
+	static final int INDEX_TYPE_SIZE = 2;
 
 	byte[] readFile(String resourceName) {
 		try {
@@ -1340,24 +1445,37 @@ public class TriangleTest {
 
 	void cleanUp() {
 		cleanupSwapchain();
+		
 		VK10.vkDestroyBuffer(device, vertexBuffer, null);
 		VK10.vkFreeMemory(device, vertexBufferMemory, null);
+		
+		VK10.vkDestroyBuffer(device, indexBuffer, null);
+		VK10.vkFreeMemory(device, indexBufferMemory, null);
+		
 		MemoryUtil.memFree(swapchainImages);
+		
 		for (int index = 0; index < MAX_FRAMES_IN_FLIGHT; index++) {
 			VK10.vkDestroySemaphore(device, renderFinishedSemaphores[index], null);
 			VK10.vkDestroySemaphore(device, imageAvailableSemaphores[index], null);
 			VK10.vkDestroyFence(device, inFlightFences[index], null);
 		}
+		
 		VK10.vkDestroyCommandPool(device, commandPool, null);
+		
 		VK10.vkDestroyDevice(device, null);
+		
 		KHRSurface.vkDestroySurfaceKHR(instance, surface, null);
+		
 		if (DEBUG)
 			EXTDebugUtils.vkDestroyDebugUtilsMessengerEXT(instance, debugMessenger, null);
+		
 		VK10.vkDestroyInstance(instance, null);
+		
 		GLFW.glfwDestroyWindow(window);
 		GLFW.glfwTerminate();
+		
 		Performance.print((String description, long duration) -> {
-			return description.startsWith("drawFrame");
+			return duration > 100000;
 		});
 	}
 
