@@ -1154,10 +1154,6 @@ public class TriangleTestBackup3 {
 		return shaderModule;
 	}
 	
-	static class UniformBufferObject {
-		
-	}
-	
 	static class Vertex {
 		
 		static final int FLOATS = 2 + 3;

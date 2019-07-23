@@ -22,6 +22,12 @@ import org.lwjgl.vulkan.VkCommandPoolCreateInfo;
 import org.lwjgl.vulkan.VkDebugUtilsMessengerCallbackDataEXT;
 import org.lwjgl.vulkan.VkDebugUtilsMessengerCallbackEXTI;
 import org.lwjgl.vulkan.VkDebugUtilsMessengerCreateInfoEXT;
+import org.lwjgl.vulkan.VkDescriptorBufferInfo;
+import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
+import org.lwjgl.vulkan.VkDescriptorPoolSize;
+import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo;
+import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding;
+import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkDeviceCreateInfo;
 import org.lwjgl.vulkan.VkDeviceQueueCreateInfo;
@@ -67,6 +73,7 @@ import org.lwjgl.vulkan.VkSwapchainCreateInfoKHR;
 import org.lwjgl.vulkan.VkVertexInputAttributeDescription;
 import org.lwjgl.vulkan.VkVertexInputBindingDescription;
 import org.lwjgl.vulkan.VkViewport;
+import org.lwjgl.vulkan.VkWriteDescriptorSet;
 
 import nl.knokko.test.Performance;
 
@@ -84,9 +91,12 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.nio.ShortBuffer;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.lwjgl.PointerBuffer;
 
 import static nl.knokko.test.Performance.next;
@@ -140,12 +150,15 @@ public class TriangleTest {
 	LongBuffer swapchainImageViews;
 
 	long renderPass;
+	long descriptorSetLayout;
 	long pipelineLayout;
 	long graphicsPipeline;
 
 	LongBuffer swapchainFrameBuffers;
 
 	long commandPool;
+	long descriptorPool;
+	long[] descriptorSets;
 	PointerBuffer commandBuffers;
 
 	int currentFrame = 0;
@@ -159,6 +172,9 @@ public class TriangleTest {
 	long vertexBufferMemory;
 	long indexBuffer;
 	long indexBufferMemory;
+	
+	LongBuffer uniformBuffers;
+	LongBuffer uniformBuffersMemory;
 
 	void run() {
 
@@ -199,6 +215,8 @@ public class TriangleTest {
 		createImageViews();
 		next("create render pass");
 		createRenderPass();
+		next("create descriptor set layout");
+		createDescriptorSetLayout();
 		next("create graphics pipeline");
 		createGraphicsPipeline();
 		next("create framebuffers");
@@ -209,6 +227,12 @@ public class TriangleTest {
 		createVertexBuffers();
 		next("create index buffers");
 		createIndexBuffers();
+		next("create uniform buffers");
+		createUniformBuffers();
+		next("create descriptor pool");
+		createDescriptorPool();
+		next("create descriptor sets");
+		createDescriptorSets();
 		next("create command buffers");
 		createCommandBuffers();
 		next("create semaphores");
@@ -759,10 +783,30 @@ public class TriangleTest {
 			renderPass = renderPassResult.get(0);
 		}
 	}
+	
+	void createDescriptorSetLayout() {
+		try (MemoryStack stack = stackPush()){
+			VkDescriptorSetLayoutBinding uboLayoutBinding = VkDescriptorSetLayoutBinding.callocStack(stack);
+			uboLayoutBinding.binding(0);
+			uboLayoutBinding.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+			uboLayoutBinding.descriptorCount(1);
+			
+			uboLayoutBinding.stageFlags(VK10.VK_SHADER_STAGE_VERTEX_BIT);
+			uboLayoutBinding.pImmutableSamplers(null);
+			
+			VkDescriptorSetLayoutCreateInfo descriptorCI = VkDescriptorSetLayoutCreateInfo.callocStack(stack);
+			descriptorCI.sType(VK10.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
+			descriptorCI.pBindings(VkDescriptorSetLayoutBinding.callocStack(1, stack).put(0, uboLayoutBinding));
+			
+			LongBuffer pSetLayout = stack.callocLong(1);
+			validate(VK10.vkCreateDescriptorSetLayout(device, descriptorCI, null, pSetLayout));
+			descriptorSetLayout = pSetLayout.get(0);
+		}
+	}
 
 	void createGraphicsPipeline() {
-		byte[] vertexCode = readFile("nl/knokko/test2/vert.spv");
-		byte[] fragmentCode = readFile("nl/knokko/test2/frag.spv");
+		byte[] vertexCode = readFile("nl/knokko/test3/vert.spv");
+		byte[] fragmentCode = readFile("nl/knokko/test3/frag.spv");
 
 		long vertShaderModule = createShaderModule(vertexCode);
 		long fragShaderModule = createShaderModule(fragmentCode);
@@ -817,8 +861,11 @@ public class TriangleTest {
 			rasterCI.rasterizerDiscardEnable(false);
 			rasterCI.polygonMode(VK10.VK_POLYGON_MODE_FILL);
 			rasterCI.lineWidth(1f);
+			
 			rasterCI.cullMode(VK10.VK_CULL_MODE_BACK_BIT);
-			rasterCI.frontFace(VK10.VK_FRONT_FACE_CLOCKWISE);
+			
+			// Due to the inverting of the projection or view matrix, we need to do this counter clockwise
+			rasterCI.frontFace(VK10.VK_FRONT_FACE_COUNTER_CLOCKWISE);
 			rasterCI.depthBiasEnable(false);
 			rasterCI.depthBiasConstantFactor(0f);
 			rasterCI.depthBiasClamp(0f);
@@ -865,7 +912,7 @@ public class TriangleTest {
 
 			VkPipelineLayoutCreateInfo layoutCI = VkPipelineLayoutCreateInfo.callocStack(stack);
 			layoutCI.sType(VK10.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
-			layoutCI.pSetLayouts(null);
+			layoutCI.pSetLayouts(stack.longs(descriptorSetLayout));
 			layoutCI.pPushConstantRanges(null);
 			LongBuffer pipelineResultBuffer = stack.callocLong(1);
 			validate(VK10.vkCreatePipelineLayout(device, layoutCI, null, pipelineResultBuffer));
@@ -950,7 +997,7 @@ public class TriangleTest {
 		}
 		try (MemoryStack stack = stackPush()) {
 			VkMemoryRequirements memRequirements = VkMemoryRequirements.callocStack(stack);
-			VK10.vkGetBufferMemoryRequirements(device, buffer.get(0), memRequirements);
+			VK10.vkGetBufferMemoryRequirements(device, buffer.get(buffer.position()), memRequirements);
 			
 			VkMemoryAllocateInfo memoryAI = VkMemoryAllocateInfo.callocStack(stack);
 			memoryAI.sType(VK10.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
@@ -960,7 +1007,7 @@ public class TriangleTest {
 			// TODO Notice that this function should be used to create few big buffers rather than many small
 			validate(VK10.vkAllocateMemory(device, memoryAI, null, bufferMemory));
 		}
-		validate(VK10.vkBindBufferMemory(device, buffer.get(0), bufferMemory.get(0), 0));
+		validate(VK10.vkBindBufferMemory(device, buffer.get(buffer.position()), bufferMemory.get(bufferMemory.position()), 0));
 	}
 	
 	void createVertexBuffers() {
@@ -1025,6 +1072,73 @@ public class TriangleTest {
 			
 			VK10.vkDestroyBuffer(device, stagingBuffer, null);
 			VK10.vkFreeMemory(device, stagingBufferMemory, null);
+		}
+	}
+	
+	void createUniformBuffers() {
+		int bufferSize = UniformBufferObject.BYTES;
+		int imageCount = swapchainImages.capacity();
+		
+		uniformBuffers = MemoryUtil.memCallocLong(imageCount);
+		uniformBuffersMemory = MemoryUtil.memCallocLong(imageCount);
+		
+		for (int index = 0; index < swapchainImages.capacity(); index++) {
+			createBuffer(bufferSize, VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+					VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+					(LongBuffer) uniformBuffers.position(index), (LongBuffer) uniformBuffersMemory.position(index));
+		}
+	}
+	
+	void createDescriptorPool() {
+		try (MemoryStack stack = stackPush()){
+			VkDescriptorPoolSize poolSize = VkDescriptorPoolSize.callocStack(stack);
+			poolSize.type(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+			poolSize.descriptorCount(swapchainImages.capacity());
+			
+			VkDescriptorPoolCreateInfo poolCI = VkDescriptorPoolCreateInfo.callocStack(stack);
+			poolCI.sType(VK10.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
+			poolCI.pPoolSizes(VkDescriptorPoolSize.callocStack(1, stack).put(0, poolSize));
+			poolCI.maxSets(swapchainImages.capacity());
+			
+			LongBuffer pDescriptorPool = stack.callocLong(1);
+			validate(VK10.vkCreateDescriptorPool(device, poolCI, null, pDescriptorPool));
+			descriptorPool = pDescriptorPool.get(0);
+		}
+	}
+	
+	void createDescriptorSets() {
+		try (MemoryStack stack = stackPush()){
+			VkDescriptorSetAllocateInfo descriptorSetAI = VkDescriptorSetAllocateInfo.callocStack(stack);
+			descriptorSetAI.sType(VK10.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO);
+			descriptorSetAI.descriptorPool(descriptorPool);
+			long[] descriptorSetLayoutCopies = new long[swapchainImages.capacity()];
+			Arrays.fill(descriptorSetLayoutCopies, descriptorSetLayout);
+			descriptorSetAI.pSetLayouts(stack.longs(descriptorSetLayoutCopies));
+			
+			LongBuffer descriptorSets = stack.callocLong(swapchainImages.capacity());
+			validate(VK10.vkAllocateDescriptorSets(device, descriptorSetAI, descriptorSets));
+			this.descriptorSets = new long[swapchainImages.capacity()];
+			descriptorSets.get(this.descriptorSets);
+			
+			for (int index = 0; index < swapchainImages.capacity(); index++) {
+				VkDescriptorBufferInfo descriptorBI = VkDescriptorBufferInfo.callocStack(stack);
+				descriptorBI.buffer(uniformBuffers.get(index));
+				descriptorBI.offset(0);
+				descriptorBI.range(UniformBufferObject.BYTES);
+				
+				VkWriteDescriptorSet writeSet = VkWriteDescriptorSet.callocStack(stack);
+				writeSet.sType(VK10.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+				writeSet.dstSet(this.descriptorSets[index]);
+				writeSet.dstBinding(0);
+				writeSet.dstArrayElement(0);
+				
+				writeSet.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+				writeSet.pBufferInfo(VkDescriptorBufferInfo.callocStack(1, stack).put(0, descriptorBI));
+				writeSet.pImageInfo(null);
+				writeSet.pTexelBufferView(null);
+				
+				VK10.vkUpdateDescriptorSets(device, VkWriteDescriptorSet.callocStack(1, stack).put(0, writeSet), null);
+			}
 		}
 	}
 	
@@ -1105,6 +1219,8 @@ public class TriangleTest {
 
 				VK10.vkCmdBindPipeline(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 				
+				VK10.vkCmdBindDescriptorSets(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, stack.longs(descriptorSets[index]), null);
+				
 				// TODO It is recommended to use the offsets to store multiple models in the same buffer
 				VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0));
 				
@@ -1152,6 +1268,31 @@ public class TriangleTest {
 			shaderModule = shaderModuleBuffer.get(0);
 		}
 		return shaderModule;
+	}
+	
+	static class UniformBufferObject {
+		
+		static final int MATRIX_COUNT = 3;
+		static final int MATRIX_FLOATS = 16;
+		
+		static final int FLOATS = MATRIX_COUNT * MATRIX_FLOATS;
+		static final int BYTES = FLOATS * Float.BYTES;
+		
+		Matrix4f model;
+		Matrix4f view;
+		Matrix4f proj;
+		
+		UniformBufferObject(){
+			
+		}
+		
+		void put(FloatBuffer dest, int offset) {
+			model.get(offset, dest);
+			view.get(offset + MATRIX_FLOATS, dest);
+			proj.get(offset + 2 * MATRIX_FLOATS, dest);
+			
+			// TODO Make sure that you apply all alignment rules of Vulkan! (It is now, but don't forget it later)
+		}
 	}
 	
 	static class Vertex {
@@ -1359,6 +1500,9 @@ public class TriangleTest {
 			}
 
 			LongBuffer signalSemaphores = stack.longs(renderFinishedSemaphores[currentFrame]);
+			
+			int imageIndex = imageIndexBuffer.get(0);
+			updateUniformBuffer(stack, imageIndex);
 
 			next("drawFrame submit info");
 			VkSubmitInfo submitInfo = VkSubmitInfo.callocStack(stack);
@@ -1367,11 +1511,11 @@ public class TriangleTest {
 			submitInfo.pWaitSemaphores(stack.longs(imageAvailableSemaphores[currentFrame]));
 			submitInfo.pWaitDstStageMask(stack.ints(VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT));
 
-			submitInfo.pCommandBuffers(stack.pointers(commandBuffers.get(imageIndexBuffer.get(0))));
+			submitInfo.pCommandBuffers(stack.pointers(commandBuffers.get(imageIndex)));
 
 			submitInfo.pSignalSemaphores(signalSemaphores);
 
-			next("reset fences");
+			next("drawFrame reset fences");
 			validate(VK10.vkResetFences(device, fencesBuffer));
 			next("drawFrame queue submit");
 			validate(VK10.vkQueueSubmit(graphicsQueue, submitInfo, inFlightFences[currentFrame]));
@@ -1403,6 +1547,33 @@ public class TriangleTest {
 				currentFrame = 0;
 		}
 	}
+	
+	// I'm not sure I like this kind of timings...
+	static long startTime = System.nanoTime();
+	
+	void updateUniformBuffer(MemoryStack stack, int imageIndex) {
+		long currentTime = System.nanoTime();
+		long elapsed = currentTime - startTime;
+		double seconds = elapsed / 1000000000.0;
+		
+		UniformBufferObject ubo = new UniformBufferObject();
+		ubo.model = new Matrix4f().identity().rotate((float) (seconds * 0.5 * Math.PI), new Vector3f(0f, 0f, 1f));
+		ubo.view = new Matrix4f().lookAt(new Vector3f(2f, 2f, 2f), new Vector3f(), new Vector3f(0f, 0f, 1f));
+		
+		ubo.proj = new Matrix4f().perspective((float) (0.25 * Math.PI), 
+				swapchainImageExtent.width() / (float) swapchainImageExtent.height(), 0.1f, 10f);
+		ubo.proj.m11(-ubo.proj.m11());
+		
+		PointerBuffer ppData = stack.callocPointer(1);
+		validate(VK10.vkMapMemory(device, uniformBuffersMemory.get(imageIndex), 0, UniformBufferObject.BYTES, 0, ppData));
+		
+		FloatBuffer destBuffer = MemoryUtil.memFloatBuffer(ppData.get(0), UniformBufferObject.FLOATS);
+		ubo.put(destBuffer, 0);
+		
+		VK10.vkUnmapMemory(device, uniformBuffersMemory.get(imageIndex));
+		
+		//startTime = currentTime;
+	}
 
 	void cleanupSwapchain() {
 		for (int index = 0; index < swapchainFrameBuffers.capacity(); index++)
@@ -1415,6 +1586,13 @@ public class TriangleTest {
 		VK10.vkDestroyRenderPass(device, renderPass, null);
 		for (int index = 0; index < swapchainImageViews.capacity(); index++)
 			VK10.vkDestroyImageView(device, swapchainImageViews.get(index), null);
+		for (int index = 0; index < swapchainImageViews.capacity(); index++) {
+			VK10.vkDestroyBuffer(device, uniformBuffers.get(index), null);
+			VK10.vkFreeMemory(device, uniformBuffersMemory.get(index), null);
+		}
+		VK10.vkDestroyDescriptorPool(device, descriptorPool, null);
+		MemoryUtil.memFree(uniformBuffers);
+		MemoryUtil.memFree(uniformBuffersMemory);
 		MemoryUtil.memFree(swapchainImageViews);
 		swapchainImageExtent.free();
 		KHRSwapchain.vkDestroySwapchainKHR(device, swapchain, null);
@@ -1440,11 +1618,16 @@ public class TriangleTest {
 		createRenderPass();
 		createGraphicsPipeline();
 		createFramebuffers();
+		createUniformBuffers();
+		createDescriptorPool();
+		createDescriptorSets();
 		createCommandBuffers();
 	}
 
 	void cleanUp() {
 		cleanupSwapchain();
+		
+		VK10.vkDestroyDescriptorSetLayout(device, descriptorSetLayout, null);
 		
 		VK10.vkDestroyBuffer(device, vertexBuffer, null);
 		VK10.vkFreeMemory(device, vertexBufferMemory, null);
@@ -1475,7 +1658,7 @@ public class TriangleTest {
 		GLFW.glfwTerminate();
 		
 		Performance.print((String description, long duration) -> {
-			return duration > 100000;
+			return !description.startsWith("drawFrame");
 		});
 	}
 
