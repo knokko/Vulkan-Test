@@ -1,4 +1,4 @@
-package nl.knokko.test3;
+package nl.knokko.test4;
 
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWVulkan;
@@ -13,6 +13,7 @@ import org.lwjgl.vulkan.VkAttachmentDescription;
 import org.lwjgl.vulkan.VkAttachmentReference;
 import org.lwjgl.vulkan.VkBufferCopy;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
+import org.lwjgl.vulkan.VkBufferImageCopy;
 import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkClearValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -23,6 +24,7 @@ import org.lwjgl.vulkan.VkDebugUtilsMessengerCallbackDataEXT;
 import org.lwjgl.vulkan.VkDebugUtilsMessengerCallbackEXTI;
 import org.lwjgl.vulkan.VkDebugUtilsMessengerCreateInfoEXT;
 import org.lwjgl.vulkan.VkDescriptorBufferInfo;
+import org.lwjgl.vulkan.VkDescriptorImageInfo;
 import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
 import org.lwjgl.vulkan.VkDescriptorPoolSize;
 import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo;
@@ -33,9 +35,14 @@ import org.lwjgl.vulkan.VkDeviceCreateInfo;
 import org.lwjgl.vulkan.VkDeviceQueueCreateInfo;
 import org.lwjgl.vulkan.VkExtensionProperties;
 import org.lwjgl.vulkan.VkExtent2D;
+import org.lwjgl.vulkan.VkExtent3D;
 import org.lwjgl.vulkan.VkFenceCreateInfo;
 import org.lwjgl.vulkan.VkFramebufferCreateInfo;
 import org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo;
+import org.lwjgl.vulkan.VkImageCreateInfo;
+import org.lwjgl.vulkan.VkImageMemoryBarrier;
+import org.lwjgl.vulkan.VkImageSubresourceLayers;
+import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.lwjgl.vulkan.VkImageViewCreateInfo;
 import org.lwjgl.vulkan.VkInstance;
 import org.lwjgl.vulkan.VkInstanceCreateInfo;
@@ -44,6 +51,7 @@ import org.lwjgl.vulkan.VkMemoryAllocateInfo;
 import org.lwjgl.vulkan.VkMemoryRequirements;
 import org.lwjgl.vulkan.VkMemoryType;
 import org.lwjgl.vulkan.VkOffset2D;
+import org.lwjgl.vulkan.VkOffset3D;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.lwjgl.vulkan.VkPhysicalDeviceFeatures;
 import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
@@ -62,6 +70,7 @@ import org.lwjgl.vulkan.VkQueueFamilyProperties;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkRenderPassBeginInfo;
 import org.lwjgl.vulkan.VkRenderPassCreateInfo;
+import org.lwjgl.vulkan.VkSamplerCreateInfo;
 import org.lwjgl.vulkan.VkSemaphoreCreateInfo;
 import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
 import org.lwjgl.vulkan.VkSubmitInfo;
@@ -82,6 +91,8 @@ import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.EXTDebugUtils.*;
 
+import java.awt.Color;
+import java.awt.image.BufferedImage;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.net.URL;
@@ -95,6 +106,8 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
+import javax.imageio.ImageIO;
+
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.PointerBuffer;
@@ -106,7 +119,7 @@ public class TriangleTest {
 	static boolean DEBUG = true;
 
 	static final int UINT_MAX = -1;
-	static final int MAX_FRAMES_IN_FLIGHT = 1;
+	static final int MAX_FRAMES_IN_FLIGHT = 2;
 
 	static final String[] REQUIRED_DEBUG_LAYERS = { "VK_LAYER_LUNARG_standard_validation" };
 
@@ -126,7 +139,7 @@ public class TriangleTest {
 		TriangleTest triTest = new TriangleTest();
 		triTest.run();
 
-		// TODO Left at vertex buffers/index buffer
+		// TODO Finished texture mapping/combined image sampler
 	}
 
 	long window;
@@ -175,6 +188,11 @@ public class TriangleTest {
 	
 	LongBuffer uniformBuffers;
 	LongBuffer uniformBuffersMemory;
+	
+	long textureImage;
+	long textureImageMemory;
+	long textureImageView;
+	long textureSampler;
 
 	void run() {
 
@@ -223,6 +241,12 @@ public class TriangleTest {
 		createFramebuffers();
 		next("create command pool");
 		createCommandPool();
+		next("create texture image");
+		createTextureImage();
+		next("create texture image view");
+		createTextureImageView();
+		next("create texture sampler");
+		createTextureSampler();
 		next("create vertex buffers");
 		createVertexBuffers();
 		next("create index buffers");
@@ -468,17 +492,21 @@ public class TriangleTest {
 
 	boolean isSuitable(MemoryStack stack, VkPhysicalDevice device) {
 
-		/*
-		 * The next line could be used to obtain information, but we don't need it
-		 * VKCapabilitiesInstance capabilities = device.getCapabilities();
-		 * VkPhysicalDeviceFeatures features = VkPhysicalDeviceFeatures.create();
-		 * VK10.vkGetPhysicalDeviceFeatures(device, features);
-		 */
+		// We don't need the capabilities (yet)
+		//VKCapabilitiesInstance capabilities = device.getCapabilities();
+		
 		if (findQueueFamilies(stack, device).isComplete() && checkExtensionSupport(device)) {
 			boolean swapchainSupport = false;
 			Swapchain swapchain = getSwapchainDetails(device, stack);
 			swapchainSupport = swapchain.presentModes.capacity() > 0 && swapchain.surfaceFormats.capacity() > 0;
-			return swapchainSupport;
+			
+			if (swapchainSupport) {
+				VkPhysicalDeviceFeatures features = VkPhysicalDeviceFeatures.create();
+				VK10.vkGetPhysicalDeviceFeatures(device, features);
+				return features.samplerAnisotropy();
+			} else {
+				return false;
+			}
 		} else {
 			return false;
 		}
@@ -707,10 +735,12 @@ public class TriangleTest {
 		int size = swapchainImages.capacity();
 		swapchainImageViews = MemoryUtil.memAllocLong(size);
 
-		// TODO This could probably be optimized by reusing the createInfo and only
+		// TODO createImageView could probably be optimized by reusing the createInfo and only
 		// changing the image value for
 		// each image view
 		for (int index = 0; index < size; index++) {
+			swapchainImageViews.put(index, createImageView(swapchainImages.get(index), swapchainImageFormat));
+			/*
 			try (MemoryStack stack = stackPush()) {
 				VkImageViewCreateInfo createInfo = VkImageViewCreateInfo.callocStack(stack);
 				createInfo.sType(VK10.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
@@ -731,7 +761,7 @@ public class TriangleTest {
 
 				validate(VK10.vkCreateImageView(device, createInfo, null,
 						(LongBuffer) swapchainImageViews.slice().position(index)));
-			}
+			}*/
 		}
 	}
 
@@ -794,9 +824,16 @@ public class TriangleTest {
 			uboLayoutBinding.stageFlags(VK10.VK_SHADER_STAGE_VERTEX_BIT);
 			uboLayoutBinding.pImmutableSamplers(null);
 			
+			VkDescriptorSetLayoutBinding samplerLayoutBinding = VkDescriptorSetLayoutBinding.callocStack(stack);
+			samplerLayoutBinding.binding(1);
+			samplerLayoutBinding.descriptorCount(1);
+			samplerLayoutBinding.descriptorType(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			samplerLayoutBinding.pImmutableSamplers(null);
+			samplerLayoutBinding.stageFlags(VK10.VK_SHADER_STAGE_FRAGMENT_BIT);
+			
 			VkDescriptorSetLayoutCreateInfo descriptorCI = VkDescriptorSetLayoutCreateInfo.callocStack(stack);
 			descriptorCI.sType(VK10.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
-			descriptorCI.pBindings(VkDescriptorSetLayoutBinding.callocStack(1, stack).put(0, uboLayoutBinding));
+			descriptorCI.pBindings(VkDescriptorSetLayoutBinding.callocStack(2, stack).put(0, uboLayoutBinding).put(1, samplerLayoutBinding));
 			
 			LongBuffer pSetLayout = stack.callocLong(1);
 			validate(VK10.vkCreateDescriptorSetLayout(device, descriptorCI, null, pSetLayout));
@@ -805,8 +842,8 @@ public class TriangleTest {
 	}
 
 	void createGraphicsPipeline() {
-		byte[] vertexCode = readFile("nl/knokko/test3/vert.spv");
-		byte[] fragmentCode = readFile("nl/knokko/test3/frag.spv");
+		byte[] vertexCode = readFile("nl/knokko/test4/vert.spv");
+		byte[] fragmentCode = readFile("nl/knokko/test4/frag.spv");
 
 		long vertShaderModule = createShaderModule(vertexCode);
 		long fragShaderModule = createShaderModule(fragmentCode);
@@ -985,6 +1022,181 @@ public class TriangleTest {
 		}
 	}
 	
+	void createImage(int width, int height, int format, int tiling, int usage, int properties, LongBuffer pImage, LongBuffer pImageMemory) {
+		try (MemoryStack stack = stackPush()){
+			VkImageCreateInfo imageCI = VkImageCreateInfo.callocStack(stack);
+			imageCI.sType(VK10.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
+			imageCI.imageType(VK10.VK_IMAGE_TYPE_2D);
+			imageCI.extent(VkExtent3D.callocStack(stack).set(width, height, 1));
+			imageCI.mipLevels(1);
+			imageCI.arrayLayers(1);
+			imageCI.format(format);
+			
+			// TODO For mutable images, use VK_IMAGE_TILING_LINEAR instead
+			imageCI.tiling(tiling);
+			imageCI.initialLayout(VK10.VK_IMAGE_LAYOUT_UNDEFINED);
+			imageCI.usage(usage);
+			imageCI.sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE);
+			imageCI.samples(VK10.VK_SAMPLE_COUNT_1_BIT);
+			imageCI.flags(0);
+			
+			validate(VK10.vkCreateImage(device, imageCI, null, pImage));
+			
+			VkMemoryRequirements memRequirements = VkMemoryRequirements.callocStack(stack);
+			VK10.vkGetImageMemoryRequirements(device, pImage.get(0), memRequirements);
+			
+			VkMemoryAllocateInfo memoryAI = VkMemoryAllocateInfo.callocStack(stack);
+			memoryAI.sType(VK10.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+			memoryAI.allocationSize(memRequirements.size());
+			memoryAI.memoryTypeIndex(findMemoryType(memRequirements.memoryTypeBits(), properties));
+			
+			validate(VK10.vkAllocateMemory(device, memoryAI, null, pImageMemory));
+			
+			validate(VK10.vkBindImageMemory(device, pImage.get(0), pImageMemory.get(0), 0));
+		}
+	}
+	
+	void createTextureImage() {
+		try (MemoryStack stack = stackPush()){
+			BufferedImage image = ImageIO.read(TriangleTest.class.getClassLoader().getResource("nl/knokko/test4/statue.jpg"));
+			System.out.println("image type is " + image.getType());
+			//BufferedImage image2 = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+			LongBuffer stagingBuffer = stack.callocLong(1);
+			LongBuffer stagingBufferMemory = stack.callocLong(1);
+			int imageIntSize = image.getWidth() * image.getHeight();
+			int imageByteSize = 4 * imageIntSize;
+			createBuffer(imageByteSize, VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+					VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+					stagingBuffer, stagingBufferMemory);
+			PointerBuffer ppData = stack.callocPointer(1);
+			validate(VK10.vkMapMemory(device, stagingBufferMemory.get(0), 0, imageByteSize, 0, ppData));
+			ByteBuffer byteDestBuffer = MemoryUtil.memByteBuffer(ppData.get(0), imageByteSize);
+			for (int y = 0; y < image.getHeight(); y++) {
+				for (int x = 0; x < image.getWidth(); x++) {
+					int argb = image.getRGB(x, y);
+					
+					// DON'T USE byteDestBuffer.putInt(argb) because that will flip red and blue
+					Color color = new Color(argb);
+					byteDestBuffer.put((byte) color.getRed());
+					byteDestBuffer.put((byte) color.getGreen());
+					byteDestBuffer.put((byte) color.getBlue());
+					byteDestBuffer.put((byte) color.getAlpha());
+				}
+			}
+			VK10.vkUnmapMemory(device, stagingBufferMemory.get(0));
+			
+			LongBuffer pTextureImage = stack.callocLong(1);
+			LongBuffer pTextureImageMemory = stack.callocLong(1);
+			createImage(image.getWidth(), image.getHeight(), VK10.VK_FORMAT_R8G8B8A8_UNORM, 
+					VK10.VK_IMAGE_TILING_OPTIMAL, 
+					VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK10.VK_IMAGE_USAGE_SAMPLED_BIT, 
+					VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pTextureImage, pTextureImageMemory);
+			textureImage = pTextureImage.get(0);
+			textureImageMemory = pTextureImageMemory.get(0);
+			
+			transitionImageLayout(textureImage, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_IMAGE_LAYOUT_UNDEFINED, 
+					VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+			copyBufferToImage(stagingBuffer.get(0), textureImage, image.getWidth(), image.getHeight());
+			transitionImageLayout(textureImage, VK10.VK_FORMAT_R8G8B8A8_UNORM, 
+					VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			
+			VK10.vkDestroyBuffer(device, stagingBuffer.get(0), null);
+			VK10.vkFreeMemory(device, stagingBufferMemory.get(0), null);
+		} catch (IOException e) {
+			throw new Error(e);
+		}
+	}
+	
+	void createTextureImageView() {
+		textureImageView = createImageView(textureImage, VK10.VK_FORMAT_R8G8B8A8_UNORM);
+	}
+	
+	long createImageView(long image, int format) {
+		try (MemoryStack stack = stackPush()){
+			VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.callocStack(stack);
+			viewInfo.sType(VK10.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
+			viewInfo.image(image);
+			viewInfo.viewType(VK10.VK_IMAGE_VIEW_TYPE_2D);
+			viewInfo.format(format);
+			viewInfo.subresourceRange(VkImageSubresourceRange.callocStack(stack).set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1));
+			
+			LongBuffer pView = stack.callocLong(1);
+			validate(VK10.vkCreateImageView(device, viewInfo, null, pView));
+			return pView.get(0);
+		}
+	}
+	
+	void createTextureSampler() {
+		try (MemoryStack stack = stackPush()){
+			VkSamplerCreateInfo samplerInfo = VkSamplerCreateInfo.callocStack(stack);
+			samplerInfo.sType(VK10.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO);
+			
+			// TODO Whatever is most appropriate
+			samplerInfo.magFilter(VK10.VK_FILTER_NEAREST);
+			samplerInfo.minFilter(VK10.VK_FILTER_LINEAR);
+			
+			samplerInfo.addressModeU(VK10.VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT);
+			samplerInfo.addressModeV(VK10.VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT);
+			samplerInfo.addressModeW(VK10.VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT);
+			
+			samplerInfo.anisotropyEnable(true);
+			samplerInfo.maxAnisotropy(16);
+			
+			// Shouldn't matter because we use MIRRIORED_REPEAT
+			samplerInfo.borderColor(VK10.VK_BORDER_COLOR_INT_OPAQUE_WHITE);
+			
+			// TODO This is quite interesting
+			samplerInfo.unnormalizedCoordinates(false);
+			
+			samplerInfo.compareEnable(false);
+			samplerInfo.compareOp(VK10.VK_COMPARE_OP_ALWAYS);
+			
+			samplerInfo.mipmapMode(VK10.VK_SAMPLER_MIPMAP_MODE_LINEAR);
+			samplerInfo.mipLodBias(0f);
+			samplerInfo.minLod(0f);
+			samplerInfo.maxLod(0f);
+			
+			LongBuffer pSampler = stack.callocLong(1);
+			validate(VK10.vkCreateSampler(device, samplerInfo, null, pSampler));
+			textureSampler = pSampler.get(0);
+		}
+	}
+	
+	VkCommandBuffer beginSingleTimeCommands() {
+		try (MemoryStack stack = stackPush()){
+			VkCommandBufferAllocateInfo commandBufferAI = VkCommandBufferAllocateInfo.callocStack(stack);
+			commandBufferAI.sType(VK10.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO);
+			commandBufferAI.level(VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+			commandBufferAI.commandPool(commandPool);
+			commandBufferAI.commandBufferCount(1);
+			
+			PointerBuffer pCommandBuffer = stack.callocPointer(1);
+			validate(VK10.vkAllocateCommandBuffers(device, commandBufferAI, pCommandBuffer));
+			VkCommandBuffer commandBuffer = new VkCommandBuffer(pCommandBuffer.get(0), device);
+			
+			VkCommandBufferBeginInfo commandBufferBI = VkCommandBufferBeginInfo.callocStack(stack);
+			commandBufferBI.sType(VK10.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
+			commandBufferBI.flags(VK10.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+			
+			validate(VK10.vkBeginCommandBuffer(commandBuffer, commandBufferBI));
+			return commandBuffer;
+		}
+	}
+	
+	void endSingleTimeCommands(VkCommandBuffer commandBuffer) {
+		try (MemoryStack stack = stackPush()){
+			validate(VK10.vkEndCommandBuffer(commandBuffer));
+			VkSubmitInfo submitInfo = VkSubmitInfo.callocStack(stack);
+			submitInfo.sType(VK10.VK_STRUCTURE_TYPE_SUBMIT_INFO);
+			submitInfo.pCommandBuffers(stack.pointers(commandBuffer));
+			
+			validate(VK10.vkQueueSubmit(graphicsQueue, submitInfo, VK_NULL_HANDLE));
+			validate(VK10.vkQueueWaitIdle(graphicsQueue));
+			
+			VK10.vkFreeCommandBuffers(device, commandPool, commandBuffer);
+		}
+	}
+	
 	void createBuffer(long byteSize, int usage, int properties, LongBuffer buffer, LongBuffer bufferMemory) {
 		try (MemoryStack stack = stackPush()) {
 			VkBufferCreateInfo bufferCI = VkBufferCreateInfo.callocStack(stack);
@@ -1023,7 +1235,7 @@ public class TriangleTest {
 			PointerBuffer ppData = stack.callocPointer(1);
 			validate(VK10.vkMapMemory(device, stagingBufferMemory.get(0), 0, byteSize, 0, ppData));
 			
-			FloatBuffer resultBuffer = MemoryUtil.memFloatBuffer(ppData.get(0), VERTICES.length * Vertex.FLOATS);
+			FloatBuffer resultBuffer = MemoryUtil.memByteBuffer(ppData.get(0), VERTICES.length * Vertex.BYTES).asFloatBuffer();
 			for (int vertexIndex = 0; vertexIndex < VERTICES.length; vertexIndex++)
 				VERTICES[vertexIndex].put(resultBuffer, vertexIndex * Vertex.FLOATS);
 			
@@ -1091,13 +1303,17 @@ public class TriangleTest {
 	
 	void createDescriptorPool() {
 		try (MemoryStack stack = stackPush()){
-			VkDescriptorPoolSize poolSize = VkDescriptorPoolSize.callocStack(stack);
-			poolSize.type(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-			poolSize.descriptorCount(swapchainImages.capacity());
+			VkDescriptorPoolSize poolSize1 = VkDescriptorPoolSize.callocStack(stack);
+			poolSize1.type(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+			poolSize1.descriptorCount(swapchainImages.capacity());
+			
+			VkDescriptorPoolSize poolSize2 = VkDescriptorPoolSize.callocStack(stack);
+			poolSize2.type(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			poolSize2.descriptorCount(swapchainImages.capacity());
 			
 			VkDescriptorPoolCreateInfo poolCI = VkDescriptorPoolCreateInfo.callocStack(stack);
 			poolCI.sType(VK10.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
-			poolCI.pPoolSizes(VkDescriptorPoolSize.callocStack(1, stack).put(0, poolSize));
+			poolCI.pPoolSizes(VkDescriptorPoolSize.callocStack(2, stack).put(0, poolSize1).put(1, poolSize2));
 			poolCI.maxSets(swapchainImages.capacity());
 			
 			LongBuffer pDescriptorPool = stack.callocLong(1);
@@ -1126,39 +1342,42 @@ public class TriangleTest {
 				descriptorBI.offset(0);
 				descriptorBI.range(UniformBufferObject.BYTES);
 				
-				VkWriteDescriptorSet writeSet = VkWriteDescriptorSet.callocStack(stack);
-				writeSet.sType(VK10.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
-				writeSet.dstSet(this.descriptorSets[index]);
-				writeSet.dstBinding(0);
-				writeSet.dstArrayElement(0);
+				VkDescriptorImageInfo imageInfo = VkDescriptorImageInfo.callocStack(stack);
+				imageInfo.imageLayout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				imageInfo.imageView(textureImageView);
+				imageInfo.sampler(textureSampler);
 				
-				writeSet.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-				writeSet.pBufferInfo(VkDescriptorBufferInfo.callocStack(1, stack).put(0, descriptorBI));
-				writeSet.pImageInfo(null);
-				writeSet.pTexelBufferView(null);
+				VkWriteDescriptorSet writeSet1 = VkWriteDescriptorSet.callocStack(stack);
+				writeSet1.sType(VK10.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+				writeSet1.dstSet(this.descriptorSets[index]);
+				writeSet1.dstBinding(0);
+				writeSet1.dstArrayElement(0);
 				
-				VK10.vkUpdateDescriptorSets(device, VkWriteDescriptorSet.callocStack(1, stack).put(0, writeSet), null);
+				writeSet1.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+				writeSet1.pBufferInfo(VkDescriptorBufferInfo.callocStack(1, stack).put(0, descriptorBI));
+				writeSet1.pImageInfo(null);
+				writeSet1.pTexelBufferView(null);
+				
+				VkWriteDescriptorSet writeSet2 = VkWriteDescriptorSet.callocStack(stack);
+				writeSet2.sType(VK10.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+				writeSet2.dstSet(this.descriptorSets[index]);
+				writeSet2.dstBinding(1);
+				writeSet2.dstArrayElement(0);
+				
+				writeSet2.descriptorType(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+				writeSet2.pBufferInfo(null);
+				writeSet2.pImageInfo(VkDescriptorImageInfo.callocStack(1, stack).put(0, imageInfo));
+				writeSet2.pTexelBufferView(null);
+				
+				VK10.vkUpdateDescriptorSets(device, VkWriteDescriptorSet.callocStack(2, stack).put(0, writeSet1).put(1, writeSet2), null);
 			}
 		}
 	}
 	
 	void copyBuffer(long source, long dest, long byteSize) {
 		try (MemoryStack stack = stackPush()){
-			VkCommandBufferAllocateInfo commandBufferAI = VkCommandBufferAllocateInfo.callocStack(stack);
-			commandBufferAI.sType(VK10.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO);
-			commandBufferAI.level(VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY);
-			commandBufferAI.commandPool(commandPool);
-			commandBufferAI.commandBufferCount(1);
 			
-			PointerBuffer pCommandBuffer = stack.callocPointer(1);
-			validate(VK10.vkAllocateCommandBuffers(device, commandBufferAI, pCommandBuffer));
-			
-			VkCommandBufferBeginInfo commandBufferBI = VkCommandBufferBeginInfo.callocStack(stack);
-			commandBufferBI.sType(VK10.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
-			commandBufferBI.flags(VK10.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-			
-			VkCommandBuffer commandBuffer = new VkCommandBuffer(pCommandBuffer.get(0), device);
-			validate(VK10.vkBeginCommandBuffer(commandBuffer, commandBufferBI));
+			VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 			
 			VkBufferCopy copyRegion = VkBufferCopy.callocStack(stack);
 			copyRegion.srcOffset(0);
@@ -1167,17 +1386,65 @@ public class TriangleTest {
 			
 			VK10.vkCmdCopyBuffer(commandBuffer, source, dest, VkBufferCopy.callocStack(1, stack).put(0, copyRegion));
 			
-			validate(VK10.vkEndCommandBuffer(commandBuffer));
+			endSingleTimeCommands(commandBuffer);
+		}
+	}
+	
+	void transitionImageLayout(long image, int format, int oldLayout, int newLayout) {
+		try (MemoryStack stack = stackPush()){
+			VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 			
-			VkSubmitInfo submitInfo = VkSubmitInfo.callocStack(stack);
-			submitInfo.sType(VK10.VK_STRUCTURE_TYPE_SUBMIT_INFO);
-			submitInfo.pCommandBuffers(pCommandBuffer);
+			VkImageMemoryBarrier barrier = VkImageMemoryBarrier.callocStack(stack);
+			barrier.sType(VK10.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER);
+			barrier.oldLayout(oldLayout);
+			barrier.newLayout(newLayout);
+			barrier.srcQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED);
+			barrier.dstQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED);
 			
-			// TODO Could use a fence instead of just waiting
-			validate(VK10.vkQueueSubmit(graphicsQueue, submitInfo, VK_NULL_HANDLE));
-			validate(VK10.vkQueueWaitIdle(graphicsQueue));
+			barrier.image(image);
+			barrier.subresourceRange(VkImageSubresourceRange.callocStack(stack).set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1));
 			
-			VK10.vkFreeCommandBuffers(device, commandPool, pCommandBuffer);
+			int srcStage, dstStage;
+			
+			if (oldLayout == VK10.VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+				barrier.srcAccessMask(0);
+				barrier.dstAccessMask(VK10.VK_ACCESS_TRANSFER_WRITE_BIT);
+				
+				srcStage = VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+				dstStage = VK10.VK_PIPELINE_STAGE_TRANSFER_BIT;
+			} else if (oldLayout == VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+				barrier.srcAccessMask(VK10.VK_ACCESS_TRANSFER_WRITE_BIT);
+				barrier.dstAccessMask(VK10.VK_ACCESS_SHADER_READ_BIT);
+				
+				srcStage = VK10.VK_PIPELINE_STAGE_TRANSFER_BIT;
+				dstStage = VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+			} else {
+				throw new IllegalArgumentException("Unsupported combination of (oldLayout,newLayout): (" + oldLayout + "," + newLayout + ")");
+			}
+			
+			VK10.vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, null, null, VkImageMemoryBarrier.callocStack(1, stack).put(0, barrier));
+			
+			endSingleTimeCommands(commandBuffer);
+		}
+	}
+	
+	void copyBufferToImage(long buffer, long image, int width, int height) {
+		try (MemoryStack stack = stackPush()){
+			VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+			
+			VkBufferImageCopy region = VkBufferImageCopy.callocStack(stack);
+			region.bufferOffset(0);
+			region.bufferRowLength(0);
+			region.bufferImageHeight(0);
+			
+			region.imageSubresource(VkImageSubresourceLayers.callocStack(stack).set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1));
+			
+			region.imageOffset(VkOffset3D.callocStack(stack).set(0, 0, 0));
+			region.imageExtent(VkExtent3D.callocStack(stack).set(width, height, 1));
+			
+			VK10.vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VkBufferImageCopy.callocStack(1, stack).put(0, region));
+			
+			endSingleTimeCommands(commandBuffer);
 		}
 	}
 
@@ -1297,18 +1564,21 @@ public class TriangleTest {
 	
 	static class Vertex {
 		
-		static final int FLOATS = 2 + 3;
+		static final int FLOATS = 2 + 3 + 2;
 		static final int BYTES = FLOATS * 4;
 		
 		float x,y;
 		float red,green,blue;
+		float u,v;
 		
-		Vertex(float x, float y, float red, float green, float blue){
+		Vertex(float x, float y, float red, float green, float blue, float u, float v){
 			this.x = x;
 			this.y = y;
 			this.red = red;
 			this.green = green;
 			this.blue = blue;
+			this.u = u;
+			this.v = v;
 		}
 		
 		void put(FloatBuffer dest, int index) {
@@ -1317,6 +1587,8 @@ public class TriangleTest {
 			dest.put(index + 2, red);
 			dest.put(index + 3, green);
 			dest.put(index + 4, blue);
+			dest.put(index + 5, u);
+			dest.put(index + 6, v);
 		}
 		
 		static VkVertexInputBindingDescription.Buffer getBindingDescription(MemoryStack stack) {
@@ -1340,19 +1612,26 @@ public class TriangleTest {
 			color.format(VK10.VK_FORMAT_R32G32B32_SFLOAT);
 			color.offset(2 * 4);
 			
-			VkVertexInputAttributeDescription.Buffer descriptions = VkVertexInputAttributeDescription.callocStack(2, stack);
+			VkVertexInputAttributeDescription textureCoords = VkVertexInputAttributeDescription.callocStack(stack);
+			textureCoords.binding(0);
+			textureCoords.location(2);
+			textureCoords.format(VK10.VK_FORMAT_R32G32_SFLOAT);
+			textureCoords.offset(2 * 4 + 3 * 4);
+			
+			VkVertexInputAttributeDescription.Buffer descriptions = VkVertexInputAttributeDescription.callocStack(3, stack);
 			descriptions.put(0, position);
 			descriptions.put(1, color);
+			descriptions.put(2, textureCoords);
 			
 			return descriptions;
 		}
 	}
 	
 	static final Vertex[] VERTICES = {
-			new Vertex(-0.5f,-0.5f, 1f,0f,0f),
-			new Vertex(0.5f,-0.5f, 0f,1f,0f),
-			new Vertex(0.5f,0.5f, 0f,0f,1f),
-			new Vertex(-0.5f,0.5f, 1f,1f,1f)
+			new Vertex(-0.5f,-0.5f, 1f,0f,0f, 1f,0f),
+			new Vertex(0.5f,-0.5f, 0f,1f,0f, 0f,0f),
+			new Vertex(0.5f,0.5f, 0f,0f,1f, 0f,1f),
+			new Vertex(-0.5f,0.5f, 1f,1f,1f, 1f,1f)
 	};
 	
 	static final short[] INDICES = {
@@ -1404,6 +1683,8 @@ public class TriangleTest {
 			queueCreateInfos.flip();
 
 			VkPhysicalDeviceFeatures features = VkPhysicalDeviceFeatures.callocStack(stack);
+			features.samplerAnisotropy(true);
+			
 			VkDeviceCreateInfo createInfo = VkDeviceCreateInfo.callocStack(stack);
 			createInfo.sType(VK10.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
 			createInfo.pQueueCreateInfos(queueCreateInfos);
@@ -1486,9 +1767,9 @@ public class TriangleTest {
 			validate(VK10.vkWaitForFences(device, fencesBuffer, true, UINT_MAX));
 
 			next("drawFrame acquire next image");
-			IntBuffer imageIndexBuffer = stack.callocInt(1);
+			IntBuffer pImageIndex = stack.callocInt(1);
 			int acquireImageResult = KHRSwapchain.vkAcquireNextImageKHR(device, swapchain, UINT_MAX,
-					imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, imageIndexBuffer);
+					imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, pImageIndex);
 			
 			// If the result is SUBOPTIMAL, we will finish the drawing of this frame
 			// If so, the swapchain will be recreated at the end of this method
@@ -1501,7 +1782,7 @@ public class TriangleTest {
 
 			LongBuffer signalSemaphores = stack.longs(renderFinishedSemaphores[currentFrame]);
 			
-			int imageIndex = imageIndexBuffer.get(0);
+			int imageIndex = pImageIndex.get(0);
 			updateUniformBuffer(stack, imageIndex);
 
 			next("drawFrame submit info");
@@ -1527,7 +1808,7 @@ public class TriangleTest {
 
 			presentInfo.swapchainCount(1);
 			presentInfo.pSwapchains(stack.longs(swapchain));
-			presentInfo.pImageIndices(imageIndexBuffer);
+			presentInfo.pImageIndices(pImageIndex);
 
 			presentInfo.pResults(null);
 
@@ -1560,14 +1841,14 @@ public class TriangleTest {
 		ubo.model = new Matrix4f().identity().rotate((float) (seconds * 0.5 * Math.PI), new Vector3f(0f, 0f, 1f));
 		ubo.view = new Matrix4f().lookAt(new Vector3f(2f, 2f, 2f), new Vector3f(), new Vector3f(0f, 0f, 1f));
 		
-		ubo.proj = new Matrix4f().perspective((float) (0.25 * Math.PI), 
+		ubo.proj = new Matrix4f().perspective((float) (0.15 * Math.PI), 
 				swapchainImageExtent.width() / (float) swapchainImageExtent.height(), 0.1f, 10f);
 		ubo.proj.m11(-ubo.proj.m11());
 		
 		PointerBuffer ppData = stack.callocPointer(1);
 		validate(VK10.vkMapMemory(device, uniformBuffersMemory.get(imageIndex), 0, UniformBufferObject.BYTES, 0, ppData));
 		
-		FloatBuffer destBuffer = MemoryUtil.memFloatBuffer(ppData.get(0), UniformBufferObject.FLOATS);
+		FloatBuffer destBuffer = MemoryUtil.memByteBuffer(ppData.get(0), UniformBufferObject.FLOATS).asFloatBuffer();
 		ubo.put(destBuffer, 0);
 		
 		VK10.vkUnmapMemory(device, uniformBuffersMemory.get(imageIndex));
@@ -1626,6 +1907,11 @@ public class TriangleTest {
 
 	void cleanUp() {
 		cleanupSwapchain();
+		
+		VK10.vkDestroySampler(device, textureSampler, null);
+		VK10.vkDestroyImageView(device, textureImageView, null);
+		VK10.vkDestroyImage(device, textureImage, null);
+		VK10.vkFreeMemory(device, textureImageMemory, null);
 		
 		VK10.vkDestroyDescriptorSetLayout(device, descriptorSetLayout, null);
 		
