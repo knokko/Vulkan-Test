@@ -114,7 +114,7 @@ import org.lwjgl.PointerBuffer;
 
 import static nl.knokko.test.Performance.next;
 
-public class TriangleTest {
+public class TriangleTestBackup5 {
 
 	static boolean DEBUG = true;
 
@@ -136,7 +136,7 @@ public class TriangleTest {
 
 	public static void main(String[] args) {
 		DEBUG = args.length > 0 && args[0].equals("debug");
-		TriangleTest triTest = new TriangleTest();
+		TriangleTestBackup5 triTest = new TriangleTestBackup5();
 		triTest.run();
 
 		// TODO Finished texture mapping/combined image sampler
@@ -1058,7 +1058,7 @@ public class TriangleTest {
 	
 	void createTextureImage() {
 		try (MemoryStack stack = stackPush()){
-			BufferedImage image = ImageIO.read(TriangleTest.class.getClassLoader().getResource("nl/knokko/test4/statue.jpg"));
+			BufferedImage image = ImageIO.read(TriangleTestBackup5.class.getClassLoader().getResource("nl/knokko/test4/statue.jpg"));
 			System.out.println("image type is " + image.getType());
 			//BufferedImage image2 = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
 			LongBuffer stagingBuffer = stack.callocLong(1);
@@ -1643,7 +1643,7 @@ public class TriangleTest {
 
 	byte[] readFile(String resourceName) {
 		try {
-			URL url = TriangleTest.class.getClassLoader().getResource(resourceName);
+			URL url = TriangleTestBackup5.class.getClassLoader().getResource(resourceName);
 			URLConnection resourceConnection = url.openConnection();
 			byte[] content = new byte[resourceConnection.getContentLength()];
 			System.out.println("resource content length is " + content.length);
