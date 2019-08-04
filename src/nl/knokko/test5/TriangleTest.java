@@ -41,6 +41,7 @@ import org.lwjgl.vulkan.VkFenceCreateInfo;
 import org.lwjgl.vulkan.VkFormatProperties;
 import org.lwjgl.vulkan.VkFramebufferCreateInfo;
 import org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo;
+import org.lwjgl.vulkan.VkImageBlit;
 import org.lwjgl.vulkan.VkImageCreateInfo;
 import org.lwjgl.vulkan.VkImageMemoryBarrier;
 import org.lwjgl.vulkan.VkImageSubresourceLayers;
@@ -142,7 +143,7 @@ public class TriangleTest {
 		TriangleTest triTest = new TriangleTest();
 		triTest.run();
 
-		// TODO Finished texture mapping/combined image sampler
+		// TODO Started with mipmaps, left at the first blit calls
 	}
 
 	long window;
@@ -191,6 +192,8 @@ public class TriangleTest {
 	
 	LongBuffer uniformBuffers;
 	LongBuffer uniformBuffersMemory;
+	
+	int mipLevels;
 	
 	long textureImage;
 	long textureImageMemory;
@@ -745,7 +748,7 @@ public class TriangleTest {
 		swapchainImageViews = MemoryUtil.memAllocLong(size);
 
 		for (int index = 0; index < size; index++) {
-			swapchainImageViews.put(index, createImageView(swapchainImages.get(index), swapchainImageFormat, VK10.VK_IMAGE_ASPECT_COLOR_BIT));
+			swapchainImageViews.put(index, createImageView(swapchainImages.get(index), swapchainImageFormat, VK10.VK_IMAGE_ASPECT_COLOR_BIT, 1));
 		}
 	}
 
@@ -1032,16 +1035,16 @@ public class TriangleTest {
 		try (MemoryStack stack = stackPush()){
 			LongBuffer pImage = stack.callocLong(1);
 			LongBuffer pMemory = stack.callocLong(1);
-			createImage(swapchainImageExtent.width(), swapchainImageExtent.height(), format, VK10.VK_IMAGE_TILING_OPTIMAL, 
+			createImage(swapchainImageExtent.width(), swapchainImageExtent.height(), 1, format, VK10.VK_IMAGE_TILING_OPTIMAL, 
 					VK10.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
 					pImage, pMemory);
 			depthImage = pImage.get(0);
 			depthImageMemory = pMemory.get(0);
 		}
 		
-		depthImageView = createImageView(depthImage, format, VK10.VK_IMAGE_ASPECT_DEPTH_BIT);
+		depthImageView = createImageView(depthImage, format, VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 		
-		transitionImageLayout(depthImage, format, VK10.VK_FORMAT_UNDEFINED, VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+		transitionImageLayout(depthImage, format, VK10.VK_FORMAT_UNDEFINED, VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
 	}
 	
 	boolean hasStencilComponent(int format) {
@@ -1069,13 +1072,13 @@ public class TriangleTest {
 		throw new RuntimeException("No candidate was suitable");
 	}
 	
-	void createImage(int width, int height, int format, int tiling, int usage, int properties, LongBuffer pImage, LongBuffer pImageMemory) {
+	void createImage(int width, int height, int mipLevels, int format, int tiling, int usage, int properties, LongBuffer pImage, LongBuffer pImageMemory) {
 		try (MemoryStack stack = stackPush()){
 			VkImageCreateInfo imageCI = VkImageCreateInfo.callocStack(stack);
 			imageCI.sType(VK10.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
 			imageCI.imageType(VK10.VK_IMAGE_TYPE_2D);
 			imageCI.extent(VkExtent3D.callocStack(stack).set(width, height, 1));
-			imageCI.mipLevels(1);
+			imageCI.mipLevels(mipLevels);
 			imageCI.arrayLayers(1);
 			imageCI.format(format);
 			
@@ -1103,10 +1106,14 @@ public class TriangleTest {
 		}
 	}
 	
+	static double log2(double number) {
+		return Math.log10(number) / Math.log10(2.0);
+	}
+	
 	void createTextureImage() {
 		try (MemoryStack stack = stackPush()){
 			BufferedImage image = ImageIO.read(TriangleTest.class.getClassLoader().getResource("nl/knokko/test4/statue.jpg"));
-			System.out.println("image type is " + image.getType());
+			mipLevels = (int) log2(Math.max(image.getWidth(), image.getHeight())) + 1;
 			//BufferedImage image2 = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
 			LongBuffer stagingBuffer = stack.callocLong(1);
 			LongBuffer stagingBufferMemory = stack.callocLong(1);
@@ -1134,18 +1141,18 @@ public class TriangleTest {
 			
 			LongBuffer pTextureImage = stack.callocLong(1);
 			LongBuffer pTextureImageMemory = stack.callocLong(1);
-			createImage(image.getWidth(), image.getHeight(), VK10.VK_FORMAT_R8G8B8A8_UNORM, 
+			createImage(image.getWidth(), image.getHeight(), mipLevels, VK10.VK_FORMAT_R8G8B8A8_UNORM, 
 					VK10.VK_IMAGE_TILING_OPTIMAL, 
-					VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK10.VK_IMAGE_USAGE_SAMPLED_BIT, 
+					VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK10.VK_IMAGE_USAGE_SAMPLED_BIT | VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 
 					VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pTextureImage, pTextureImageMemory);
 			textureImage = pTextureImage.get(0);
 			textureImageMemory = pTextureImageMemory.get(0);
 			
 			transitionImageLayout(textureImage, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_IMAGE_LAYOUT_UNDEFINED, 
-					VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+					VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
 			copyBufferToImage(stagingBuffer.get(0), textureImage, image.getWidth(), image.getHeight());
-			transitionImageLayout(textureImage, VK10.VK_FORMAT_R8G8B8A8_UNORM, 
-					VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			
+			generateMipmaps(textureImage, VK10.VK_FORMAT_R8G8B8A8_UNORM, image.getWidth(), image.getHeight(), mipLevels);
 			
 			VK10.vkDestroyBuffer(device, stagingBuffer.get(0), null);
 			VK10.vkFreeMemory(device, stagingBufferMemory.get(0), null);
@@ -1154,18 +1161,97 @@ public class TriangleTest {
 		}
 	}
 	
-	void createTextureImageView() {
-		textureImageView = createImageView(textureImage, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_IMAGE_ASPECT_COLOR_BIT);
+	void generateMipmaps(long image, int imageFormat, int width, int height, int mipLevels) {
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+		
+		try (MemoryStack stack = stackPush()){
+			
+			VkFormatProperties formatProps = VkFormatProperties.callocStack(stack);
+			VK10.vkGetPhysicalDeviceFormatProperties(physicalDevice, imageFormat, formatProps);
+			if ((formatProps.optimalTilingFeatures() & VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) == 0) {
+				
+				// TODO Better error handling, like pregenerating as file or a custom calculation method
+				throw new RuntimeException("No support for linear image blitting");
+			}
+			
+			VkImageMemoryBarrier barrier = VkImageMemoryBarrier.callocStack(stack);
+			barrier.sType(VK10.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER);
+			barrier.image(image);
+			barrier.srcQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED);
+			barrier.dstQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED);
+			barrier.subresourceRange(VkImageSubresourceRange.callocStack(stack).set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, -1, 1, 0, 1));
+			
+			int mipWidth = width;
+			int mipHeight = height;
+			
+			VkOffset3D ZERO = VkOffset3D.callocStack(stack).set(0, 0, 0);
+			for (int i = 1; i < mipLevels; i++) {
+				barrier.subresourceRange().baseMipLevel(i - 1);
+				barrier.oldLayout(VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+				barrier.newLayout(VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+				barrier.srcAccessMask(VK10.VK_ACCESS_TRANSFER_WRITE_BIT);
+				barrier.dstAccessMask(VK10.VK_ACCESS_TRANSFER_READ_BIT);
+				
+				VK10.vkCmdPipelineBarrier(commandBuffer, 
+						VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 
+						0, null, null, VkImageMemoryBarrier.callocStack(1, stack).put(0, barrier));
+				
+				VkImageBlit blit = VkImageBlit.callocStack(stack);
+				blit.srcOffsets(0, ZERO);
+				blit.srcOffsets(1, VkOffset3D.callocStack(stack).set(mipWidth, mipHeight, 1));
+				blit.srcSubresource(VkImageSubresourceLayers.callocStack(stack).set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 0, 1));
+				blit.dstOffsets(0, ZERO);
+				blit.dstOffsets(1, VkOffset3D.callocStack(stack).set(mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1));
+				blit.dstSubresource(VkImageSubresourceLayers.callocStack(stack).set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1));
+				
+				// TODO Maybe use VK_FILTER_NEAREST in some circumstances?
+				VK10.vkCmdBlitImage(commandBuffer, textureImage, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 
+						textureImage, VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+						VkImageBlit.callocStack(1, stack).put(0, blit), VK10.VK_FILTER_LINEAR);
+				
+				barrier.oldLayout(VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+				barrier.newLayout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				barrier.srcAccessMask(VK10.VK_ACCESS_TRANSFER_READ_BIT);
+				barrier.dstAccessMask(VK10.VK_ACCESS_SHADER_READ_BIT);
+				
+				VK10.vkCmdPipelineBarrier(commandBuffer, 
+						VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+						0, null, null, VkImageMemoryBarrier.callocStack(1, stack).put(0, barrier));
+				
+				if (mipWidth > 1) {
+					mipWidth /= 2;
+				}
+				if (mipHeight > 1) {
+					mipHeight /= 2;
+				}
+			}
+			
+			barrier.subresourceRange().baseMipLevel(mipLevels - 1);
+			barrier.oldLayout(VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+			barrier.newLayout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			barrier.srcAccessMask(VK10.VK_ACCESS_TRANSFER_WRITE_BIT);
+			barrier.dstAccessMask(VK10.VK_ACCESS_SHADER_READ_BIT);
+			
+			VK10.vkCmdPipelineBarrier(commandBuffer, 
+					VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+					0, null, null, VkImageMemoryBarrier.callocStack(1, stack).put(0, barrier));
+			
+			endSingleTimeCommands(commandBuffer);
+		}
 	}
 	
-	long createImageView(long image, int format, int aspectFlags) {
+	void createTextureImageView() {
+		textureImageView = createImageView(textureImage, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+	}
+	
+	long createImageView(long image, int format, int aspectFlags, int mipLevels) {
 		try (MemoryStack stack = stackPush()){
 			VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.callocStack(stack);
 			viewInfo.sType(VK10.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
 			viewInfo.image(image);
 			viewInfo.viewType(VK10.VK_IMAGE_VIEW_TYPE_2D);
 			viewInfo.format(format);
-			viewInfo.subresourceRange(VkImageSubresourceRange.callocStack(stack).set(aspectFlags, 0, 1, 0, 1));
+			viewInfo.subresourceRange(VkImageSubresourceRange.callocStack(stack).set(aspectFlags, 0, mipLevels, 0, 1));
 			
 			LongBuffer pView = stack.callocLong(1);
 			validate(VK10.vkCreateImageView(device, viewInfo, null, pView));
@@ -1192,7 +1278,6 @@ public class TriangleTest {
 			// Shouldn't matter because we use MIRRIORED_REPEAT
 			samplerInfo.borderColor(VK10.VK_BORDER_COLOR_INT_OPAQUE_WHITE);
 			
-			// TODO This is quite interesting
 			samplerInfo.unnormalizedCoordinates(false);
 			
 			samplerInfo.compareEnable(false);
@@ -1200,8 +1285,10 @@ public class TriangleTest {
 			
 			samplerInfo.mipmapMode(VK10.VK_SAMPLER_MIPMAP_MODE_LINEAR);
 			samplerInfo.mipLodBias(0f);
-			samplerInfo.minLod(0f);
-			samplerInfo.maxLod(0f);
+			
+			// TODO Play around with minLod for testing, but should generally be 0
+			samplerInfo.minLod(0);
+			samplerInfo.maxLod(mipLevels);
 			
 			LongBuffer pSampler = stack.callocLong(1);
 			validate(VK10.vkCreateSampler(device, samplerInfo, null, pSampler));
@@ -1437,7 +1524,7 @@ public class TriangleTest {
 		}
 	}
 	
-	void transitionImageLayout(long image, int format, int oldLayout, int newLayout) {
+	void transitionImageLayout(long image, int format, int oldLayout, int newLayout, int mipLevels) {
 		try (MemoryStack stack = stackPush()){
 			VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 			
@@ -1461,7 +1548,7 @@ public class TriangleTest {
 				aspectMask = VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 			}
 			
-			barrier.subresourceRange(VkImageSubresourceRange.callocStack(stack).set(aspectMask, 0, 1, 0, 1));
+			barrier.subresourceRange(VkImageSubresourceRange.callocStack(stack).set(aspectMask, 0, mipLevels, 0, 1));
 			
 			int srcStage, dstStage;
 			
