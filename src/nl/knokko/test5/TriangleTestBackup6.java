@@ -118,7 +118,7 @@ import org.lwjgl.PointerBuffer;
 
 import static nl.knokko.test.Performance.next;
 
-public class TriangleTest {
+public class TriangleTestBackup6 {
 
 	static boolean DEBUG = true;
 
@@ -140,7 +140,7 @@ public class TriangleTest {
 
 	public static void main(String[] args) {
 		DEBUG = args.length > 0 && args[0].equals("debug");
-		TriangleTest triTest = new TriangleTest();
+		TriangleTestBackup6 triTest = new TriangleTestBackup6();
 		triTest.run();
 
 		// TODO Done with mipmaps
@@ -1112,7 +1112,7 @@ public class TriangleTest {
 	
 	void createTextureImage() {
 		try (MemoryStack stack = stackPush()){
-			BufferedImage image = ImageIO.read(TriangleTest.class.getClassLoader().getResource("nl/knokko/test4/statue.jpg"));
+			BufferedImage image = ImageIO.read(TriangleTestBackup6.class.getClassLoader().getResource("nl/knokko/test4/statue.jpg"));
 			mipLevels = (int) log2(Math.max(image.getWidth(), image.getHeight())) + 1;
 			//BufferedImage image2 = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
 			LongBuffer stagingBuffer = stack.callocLong(1);
@@ -1808,7 +1808,7 @@ public class TriangleTest {
 
 	byte[] readFile(String resourceName) {
 		try {
-			URL url = TriangleTest.class.getClassLoader().getResource(resourceName);
+			URL url = TriangleTestBackup6.class.getClassLoader().getResource(resourceName);
 			URLConnection resourceConnection = url.openConnection();
 			byte[] content = new byte[resourceConnection.getContentLength()];
 			System.out.println("resource content length is " + content.length);
