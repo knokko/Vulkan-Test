@@ -1205,8 +1205,8 @@ public class TriangleTestBackup6 {
 				blit.dstSubresource(VkImageSubresourceLayers.callocStack(stack).set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1));
 				
 				// TODO Maybe use VK_FILTER_NEAREST in some circumstances?
-				VK10.vkCmdBlitImage(commandBuffer, textureImage, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 
-						textureImage, VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+				VK10.vkCmdBlitImage(commandBuffer, textureImage, VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 
+						textureImage, VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
 						VkImageBlit.callocStack(1, stack).put(0, blit), VK10.VK_FILTER_LINEAR);
 				
 				barrier.oldLayout(VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);

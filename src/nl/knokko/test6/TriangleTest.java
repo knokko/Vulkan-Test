@@ -1205,8 +1205,8 @@ public class TriangleTest {
 				blit.dstSubresource(VkImageSubresourceLayers.callocStack(stack).set(VK10.VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1));
 				
 				// TODO Maybe use VK_FILTER_NEAREST in some circumstances?
-				VK10.vkCmdBlitImage(commandBuffer, textureImage, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 
-						textureImage, VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+				VK10.vkCmdBlitImage(commandBuffer, textureImage, VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 
+						textureImage, VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
 						VkImageBlit.callocStack(1, stack).put(0, blit), VK10.VK_FILTER_LINEAR);
 				
 				barrier.oldLayout(VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -1357,7 +1357,7 @@ public class TriangleTest {
 	}
 	
 	void createVertexBuffers() {
-		int byteSize = VERTICES.length * Vertex.BYTES;
+		int byteSize = VERTEX_COUNT * Vertex.BYTES;
 		
 		try (MemoryStack stack = stackPush()){
 			LongBuffer stagingBuffer = stack.callocLong(1);
@@ -1369,9 +1369,8 @@ public class TriangleTest {
 			PointerBuffer ppData = stack.callocPointer(1);
 			validate(VK10.vkMapMemory(device, stagingBufferMemory.get(0), 0, byteSize, 0, ppData));
 			
-			FloatBuffer resultBuffer = MemoryUtil.memByteBuffer(ppData.get(0), VERTICES.length * Vertex.BYTES).asFloatBuffer();
-			for (int vertexIndex = 0; vertexIndex < VERTICES.length; vertexIndex++)
-				VERTICES[vertexIndex].put(resultBuffer, vertexIndex * Vertex.FLOATS);
+			FloatBuffer resultBuffer = MemoryUtil.memByteBuffer(ppData.get(0), byteSize).asFloatBuffer();
+			addVertices(resultBuffer);
 			
 			VK10.vkUnmapMemory(device, stagingBufferMemory.get(0));
 			
@@ -1719,34 +1718,8 @@ public class TriangleTest {
 	
 	static class Vertex {
 		
-		static final int FLOATS = 3 + 3 + 2;
+		static final int FLOATS = 3 + 2;
 		static final int BYTES = FLOATS * 4;
-		
-		float x,y,z;
-		float red,green,blue;
-		float u,v;
-		
-		Vertex(float x, float y, float z, float red, float green, float blue, float u, float v){
-			this.x = x;
-			this.y = y;
-			this.z = z;
-			this.red = red;
-			this.green = green;
-			this.blue = blue;
-			this.u = u;
-			this.v = v;
-		}
-		
-		void put(FloatBuffer dest, int index) {
-			dest.put(index, x);
-			dest.put(index + 1, y);
-			dest.put(index + 2, z);
-			dest.put(index + 3, red);
-			dest.put(index + 4, green);
-			dest.put(index + 5, blue);
-			dest.put(index + 6, u);
-			dest.put(index + 7, v);
-		}
 		
 		static VkVertexInputBindingDescription.Buffer getBindingDescription(MemoryStack stack) {
 			VkVertexInputBindingDescription description = VkVertexInputBindingDescription.callocStack(stack);
@@ -1763,38 +1736,34 @@ public class TriangleTest {
 			position.format(VK10.VK_FORMAT_R32G32B32_SFLOAT);
 			position.offset(0);
 			
-			VkVertexInputAttributeDescription color = VkVertexInputAttributeDescription.callocStack(stack);
-			color.binding(0);
-			color.location(1);
-			color.format(VK10.VK_FORMAT_R32G32B32_SFLOAT);
-			color.offset(3 * 4);
-			
 			VkVertexInputAttributeDescription textureCoords = VkVertexInputAttributeDescription.callocStack(stack);
 			textureCoords.binding(0);
-			textureCoords.location(2);
+			textureCoords.location(1);
 			textureCoords.format(VK10.VK_FORMAT_R32G32_SFLOAT);
-			textureCoords.offset(3 * 4 + 3 * 4);
+			textureCoords.offset(3 * 4);
 			
-			VkVertexInputAttributeDescription.Buffer descriptions = VkVertexInputAttributeDescription.callocStack(3, stack);
+			VkVertexInputAttributeDescription.Buffer descriptions = VkVertexInputAttributeDescription.callocStack(2, stack);
 			descriptions.put(0, position);
-			descriptions.put(1, color);
-			descriptions.put(2, textureCoords);
+			descriptions.put(1, textureCoords);
 			
 			return descriptions;
 		}
 	}
 	
-	static final Vertex[] VERTICES = {
-			new Vertex(-0.5f,-0.5f,0f, 1f,0f,0f, 1f,0f),
-			new Vertex(-0.5f,0.5f,0f, 1f,1f,1f, 1f,1f),
-			new Vertex(0.5f,0.5f,0f, 0f,0f,1f, 0f,1f),
-			new Vertex(0.5f,-0.5f,0f, 0f,1f,0f, 0f,0f),
-			
-			new Vertex(-0.5f,-0.5f,-0.5f, 1f,0f,0f, 1f,0f),
-			new Vertex(-0.5f,0.5f,-0.5f, 1f,1f,1f, 1f,1f),
-			new Vertex(0.5f,0.5f,-0.5f, 0f,0f,1f, 0f,1f),
-			new Vertex(0.5f,-0.5f,-0.5f, 0f,1f,0f, 0f,0f),
-	};
+	static void addVertices(FloatBuffer floatBuffer) {
+		VertexBuffer vertices = new VertexBuffer(floatBuffer);
+		vertices.add(-0.5f,-0.5f,0f, 1f,0f);
+		vertices.add(-0.5f,0.5f,0f, 1f,1f);
+		vertices.add(0.5f,0.5f,0f, 0f,1f);
+		vertices.add(0.5f,-0.5f,0f, 0f,0f);
+		
+		vertices.add(-0.5f,-0.5f,-0.5f, 1f,0f);
+		vertices.add(-0.5f,0.5f,-0.5f, 1f,1f);
+		vertices.add(0.5f,0.5f,-0.5f, 0f,1f);
+		vertices.add(0.5f,-0.5f,-0.5f, 0f,0f);
+	}
+	
+	static final int VERTEX_COUNT = 8;
 	
 	static final short[] INDICES = {
 			0,1,2,
