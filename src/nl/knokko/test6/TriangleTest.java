@@ -1767,7 +1767,7 @@ public class TriangleTest {
 	static final int SUB_BRANCHES = 3;
 	static final int STEPS = 20;
 	static final int CORNERS = 20;
-	static final int BRANCHES = 37;
+	static final int BRANCHES = 15;
 	static final float CORNER_ANGLE = (float) (2 * Math.PI / (CORNERS - 1));
 	static final float SIZE_FACTOR = 0.2f;
 	
