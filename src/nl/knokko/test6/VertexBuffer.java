@@ -29,4 +29,11 @@ public class VertexBuffer {
 		buffer.put(v);
 		return vertexCount++;
 	}
+	
+	/**
+	 * @return The index that would be assigned to the next vertex that will be added to this VertexBuffer
+	 */
+	public int getNextVertexIndex() {
+		return vertexCount;
+	}
 }

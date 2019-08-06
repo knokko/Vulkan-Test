@@ -105,9 +105,9 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
-import java.nio.ShortBuffer;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Random;
 import java.util.Set;
 
 import javax.imageio.ImageIO;
@@ -901,7 +901,7 @@ public class TriangleTest {
 			
 			rasterCI.cullMode(VK10.VK_CULL_MODE_BACK_BIT);
 			
-			rasterCI.frontFace(VK10.VK_FRONT_FACE_CLOCKWISE);
+			rasterCI.frontFace(VK10.VK_FRONT_FACE_COUNTER_CLOCKWISE);
 			rasterCI.depthBiasEnable(false);
 			rasterCI.depthBiasConstantFactor(0f);
 			rasterCI.depthBiasClamp(0f);
@@ -1382,7 +1382,7 @@ public class TriangleTest {
 		}
 		
 		FloatBuffer verticesBuffer;
-		ShortBuffer indicesBuffer;
+		IntBuffer indicesBuffer;
 		
 		try (MemoryStack stack = stackPush()){
 			PointerBuffer ppData = stack.mallocPointer(1);
@@ -1394,7 +1394,7 @@ public class TriangleTest {
 			long indicesAddress = ppData.get(0);
 			
 			verticesBuffer = MemoryUtil.memByteBuffer(verticesAddress, vertexByteSize).asFloatBuffer();
-			indicesBuffer = MemoryUtil.memByteBuffer(indicesAddress, indexByteSize).asShortBuffer();
+			indicesBuffer = MemoryUtil.memByteBuffer(indicesAddress, indexByteSize).asIntBuffer();
 		}
 		
 		addModelData(verticesBuffer, indicesBuffer);
@@ -1654,7 +1654,7 @@ public class TriangleTest {
 				// TODO It is recommended to use the offsets to store multiple models in the same buffer
 				VK10.vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(vertexBuffer), stack.longs(0));
 				
-				VK10.vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK10.VK_INDEX_TYPE_UINT16);
+				VK10.vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK10.VK_INDEX_TYPE_UINT32);
 
 				VK10.vkCmdDrawIndexed(commandBuffer, INDEX_COUNT, 1, 0, 0, 0);
 
@@ -1759,34 +1759,113 @@ public class TriangleTest {
 		}
 	}
 	
-	static void addVertices(FloatBuffer floatBuffer) {
-		VertexBuffer vertices = new VertexBuffer(floatBuffer);
-		vertices.add(-0.5f,-0.5f,0f, 1f,0f);
-		vertices.add(-0.5f,0.5f,0f, 1f,1f);
-		vertices.add(0.5f,0.5f,0f, 0f,1f);
-		vertices.add(0.5f,-0.5f,0f, 0f,0f);
+	static final int INDEX_TYPE_SIZE = 4;
+	
+	static void addModelData(FloatBuffer verticesBuffer, IntBuffer indicesBuffer) {
+		addTreeBranch(new VertexBuffer(verticesBuffer), new IndexBuffer(indicesBuffer), 0, 0, 0, 
+				new Vector3f(0, 1, 0), 7f, 1f, new Random(), SUB_BRANCHES);
+		System.out.println("VERTEX_COUNT is " + VERTEX_COUNT + " and INDEX_COUNT is " + INDEX_COUNT);
+	}
+	
+	static final int SUB_BRANCHES = 3;
+	static final int STEPS = 20;
+	static final int CORNERS = 10;
+	static final int BRANCHES = 5;
+	static final float CORNER_ANGLE = (float) (2 * Math.PI / (CORNERS - 1));
+	
+	static final int BRANCH_CALLS;
+	
+	static {
+		int[] branchCalls = {0};
+		countBranches(branchCalls, SUB_BRANCHES);
+		BRANCH_CALLS = branchCalls[0];
+	}
+	
+	static void countBranches(int[] result, int numSubBranches) {
+		result[0]++;
+		if (numSubBranches > 0) {
+			for (int b = 0; b < BRANCHES; b++) {
+				countBranches(result, numSubBranches - 1);
+			}
+		}
+	}
+	
+	static final int VERTEX_COUNT = STEPS * CORNERS * BRANCH_CALLS;
+	static final int INDEX_COUNT = 6 * (STEPS - 1) * (CORNERS - 1) * BRANCH_CALLS;
+	
+	static void addTreeBranch(VertexBuffer vertices, IndexBuffer indices, float startX, float startY, float startZ, 
+			Vector3f direction, float length, float radius, Random random, int numSubBranches) {
 		
-		vertices.add(-0.5f,-0.5f,-0.5f, 1f,0f);
-		vertices.add(-0.5f,0.5f,-0.5f, 1f,1f);
-		vertices.add(0.5f,0.5f,-0.5f, 0f,1f);
-		vertices.add(0.5f,-0.5f,-0.5f, 0f,0f);
-	}
-	
-	static final int VERTEX_COUNT = 8;
-	
-	static void addIndices(ShortBuffer shortBuffer) {
-		IndexBuffer indices = new IndexBuffer(shortBuffer);
-		indices.bindFourangle((short) 0, (short) 1, (short) 2, (short) 3);
-		indices.bindFourangle((short) 4, (short) 5, (short) 6, (short) 7);
-	}
-	
-	static final int INDEX_COUNT = 12;
-	
-	static final int INDEX_TYPE_SIZE = 2;
-	
-	static void addModelData(FloatBuffer verticesBuffer, ShortBuffer indicesBuffer) {
-		addVertices(verticesBuffer);
-		addIndices(indicesBuffer);
+		float stepSize = length / (STEPS - 1);
+		Vector3f step = direction.normalize(stepSize, new Vector3f());
+		
+		// A vector perpendicular to direction with length 1
+		Vector3f perp;
+		{
+			Vector3f perpHelper = new Vector3f(1, 0, 0);
+			float helperAngle = direction.angle(perpHelper);
+			
+			// The threshold is a bit of a magic value, but we just need to make sure the angle is not too small
+			if (helperAngle < 0.4f) {
+				perpHelper = new Vector3f(0, 1, 0);
+			}
+			
+			perp = direction.cross(perpHelper, new Vector3f());
+		}
+		
+		float x = startX;
+		float y = startY;
+		float z = startZ;
+		
+		int startIndex = vertices.getNextVertexIndex();
+		
+		for (int s = 0; s < STEPS; s++) {
+			Vector3f angleDirection = new Vector3f();
+			float firstLocalRadius = 0;
+			for (int c = 0; c < CORNERS; c++) {
+				perp.rotateAxis(CORNER_ANGLE * c, direction.x, direction.y, direction.z, angleDirection);
+				float localRadius = radius * (0.9f + 0.2f * random.nextFloat());
+				if (c == 0) {
+					firstLocalRadius = localRadius;
+				}
+				if (c == CORNERS - 1) {
+					localRadius = firstLocalRadius;
+				}
+				vertices.add(x + localRadius * angleDirection.x, y + localRadius * angleDirection.y, 
+						z + localRadius * angleDirection.z, random.nextFloat(), random.nextFloat());
+			}
+			x += step.x;
+			y += step.y;
+			z += step.z;
+		}
+		
+		int lowIndex = startIndex;
+		int highIndex = startIndex + CORNERS;
+		for (int s = 1; s < STEPS; s++) {
+			
+			for (int c = 1; c < CORNERS; c++) {
+				indices.bindFourangle(lowIndex, lowIndex + 1, highIndex + 1, highIndex);
+				lowIndex++;
+				highIndex++;
+			}
+			
+			lowIndex++;
+			highIndex++;
+		}
+		
+		// And now the recursion...
+		if (numSubBranches > 0) {
+			for (int b = 0; b < BRANCHES; b++) {
+				float angle = (float) (random.nextFloat() * 2 * Math.PI);
+				Vector3f angleDirection = perp.rotateAxis(angle, direction.x, direction.y, direction.z, new Vector3f());
+				float height = length * random.nextFloat();
+				addTreeBranch(vertices, indices, 
+						startX + direction.x * height + angleDirection.x * radius, 
+						startY + direction.y * height + angleDirection.y * radius, 
+						startZ + direction.z * height + angleDirection.z * radius, 
+						angleDirection, length * 0.3f, radius * 0.3f, random, numSubBranches - 1);
+			}
+		}
 	}
 
 	byte[] readFile(String resourceName) {
@@ -1986,12 +2065,12 @@ public class TriangleTest {
 		double seconds = elapsed / 1000000000.0;
 		
 		UniformBufferObject ubo = new UniformBufferObject();
-		ubo.model = new Matrix4f().identity().rotate((float) (seconds * 0.5 * Math.PI), new Vector3f(0f, 0f, 1f));
-		ubo.view = new Matrix4f().lookAt(new Vector3f(2f, 2f, 2f), new Vector3f(), new Vector3f(0f, 0f, 1f));
+		ubo.model = new Matrix4f().identity().rotate((float) (seconds * 0.5 * Math.PI), new Vector3f(0f, 1f, 0f));
+		ubo.view = new Matrix4f().lookAt(new Vector3f(20f, 20f, 20f), new Vector3f(), new Vector3f(0f, 1f, 0f));
 		
 		// Scale because Vulkan is not the same as OpenGL, that's also why the true at the end is needed
 		ubo.proj = new Matrix4f().scale(1, -1, 1).perspective((float) (0.15 * Math.PI), 
-				swapchainImageExtent.width() / (float) swapchainImageExtent.height(), 0.1f, 10f, true);
+				swapchainImageExtent.width() / (float) swapchainImageExtent.height(), 0.1f, 100f, true);
 		
 		PointerBuffer ppData = stack.callocPointer(1);
 		validate(VK10.vkMapMemory(device, uniformBuffersMemory.get(imageIndex), 0, UniformBufferObject.BYTES, 0, ppData));
