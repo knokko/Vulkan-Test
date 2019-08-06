@@ -143,7 +143,7 @@ public class TriangleTest {
 		TriangleTest triTest = new TriangleTest();
 		triTest.run();
 
-		// TODO Started with mipmaps, left at the first blit calls
+		// TODO Done with mipmaps
 	}
 
 	long window;
