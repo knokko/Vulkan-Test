@@ -1389,7 +1389,7 @@ public class TriangleTest {
 	}
 	
 	void createIndexBuffers() {
-		int byteSize = INDEX_TYPE_SIZE * INDICES.length;
+		int byteSize = INDEX_TYPE_SIZE * INDEX_COUNT;
 		
 		try (MemoryStack stack = stackPush()){
 			LongBuffer pStagingBuffer = stack.callocLong(1);
@@ -1404,7 +1404,7 @@ public class TriangleTest {
 			validate(VK10.vkMapMemory(device, stagingBufferMemory, 0, byteSize, 0, ppData));
 			
 			ShortBuffer memoryBuffer = MemoryUtil.memByteBuffer(ppData.get(0), byteSize).asShortBuffer();
-			memoryBuffer.put(INDICES).flip();
+			addIndices(memoryBuffer);
 			VK10.vkUnmapMemory(device, stagingBufferMemory);
 			
 			LongBuffer pIndexBuffer = stack.callocLong(1);
@@ -1647,7 +1647,7 @@ public class TriangleTest {
 				
 				VK10.vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK10.VK_INDEX_TYPE_UINT16);
 
-				VK10.vkCmdDrawIndexed(commandBuffer, INDICES.length, 1, 0, 0, 0);
+				VK10.vkCmdDrawIndexed(commandBuffer, INDEX_COUNT, 1, 0, 0, 0);
 
 				VK10.vkCmdEndRenderPass(commandBuffer);
 
@@ -1765,13 +1765,13 @@ public class TriangleTest {
 	
 	static final int VERTEX_COUNT = 8;
 	
-	static final short[] INDICES = {
-			0,1,2,
-			2,3,0,
-			
-			4,5,6,
-			6,7,4
-	};
+	static void addIndices(ShortBuffer shortBuffer) {
+		IndexBuffer indices = new IndexBuffer(shortBuffer);
+		indices.bindFourangle((short) 0, (short) 1, (short) 2, (short) 3);
+		indices.bindFourangle((short) 4, (short) 5, (short) 6, (short) 7);
+	}
+	
+	static final int INDEX_COUNT = 12;
 	
 	static final int INDEX_TYPE_SIZE = 2;
 
