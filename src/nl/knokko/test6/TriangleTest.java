@@ -259,10 +259,8 @@ public class TriangleTest {
 		createTextureImageView();
 		next("create texture sampler");
 		createTextureSampler();
-		next("create vertex buffers");
-		createVertexBuffers();
-		next("create index buffers");
-		createIndexBuffers();
+		next("create model buffers");
+		createModelBuffers();
 		next("create uniform buffers");
 		createUniformBuffers();
 		next("create descriptor pool");
@@ -1356,68 +1354,79 @@ public class TriangleTest {
 		validate(VK10.vkBindBufferMemory(device, buffer.get(buffer.position()), bufferMemory.get(bufferMemory.position()), 0));
 	}
 	
-	void createVertexBuffers() {
-		int byteSize = VERTEX_COUNT * Vertex.BYTES;
+	void createModelBuffers() {
+		int vertexByteSize = Vertex.BYTES * VERTEX_COUNT;
+		int indexByteSize = INDEX_TYPE_SIZE * INDEX_COUNT;
 		
-		try (MemoryStack stack = stackPush()){
-			LongBuffer stagingBuffer = stack.callocLong(1);
-			LongBuffer stagingBufferMemory = stack.callocLong(1);
-			createBuffer(byteSize, VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
-					VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
-					stagingBuffer, stagingBufferMemory);
-			
-			PointerBuffer ppData = stack.callocPointer(1);
-			validate(VK10.vkMapMemory(device, stagingBufferMemory.get(0), 0, byteSize, 0, ppData));
-			
-			FloatBuffer resultBuffer = MemoryUtil.memByteBuffer(ppData.get(0), byteSize).asFloatBuffer();
-			addVertices(resultBuffer);
-			
-			VK10.vkUnmapMemory(device, stagingBufferMemory.get(0));
-			
-			LongBuffer pVertexBuffer = stack.callocLong(1);
-			LongBuffer pVertexBufferMemory = stack.callocLong(1);
-			createBuffer(byteSize, VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
-					VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pVertexBuffer, pVertexBufferMemory);
-			vertexBuffer = pVertexBuffer.get(0);
-			vertexBufferMemory = pVertexBufferMemory.get(0);
-			
-			copyBuffer(stagingBuffer.get(0), vertexBuffer, byteSize);
-			
-			VK10.vkDestroyBuffer(device, stagingBuffer.get(0), null);
-			VK10.vkFreeMemory(device, stagingBufferMemory.get(0), null);
-		}
-	}
-	
-	void createIndexBuffers() {
-		int byteSize = INDEX_TYPE_SIZE * INDEX_COUNT;
+		long stagingVertexBufferMemory;
+		long stagingVertexBuffer;
 		
-		try (MemoryStack stack = stackPush()){
-			LongBuffer pStagingBuffer = stack.callocLong(1);
-			LongBuffer pStagingBufferMemory = stack.callocLong(1);
-			createBuffer(byteSize, VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+		long stagingIndexBufferMemory;
+		long stagingIndexBuffer;
+		
+		try(MemoryStack stack = stackPush()){
+			LongBuffer pStagingBuffer = stack.mallocLong(1);
+			LongBuffer pStagingBufferMemory = stack.mallocLong(1);
+			
+			createBuffer(vertexByteSize, VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
 					VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
 					pStagingBuffer, pStagingBufferMemory);
-			long stagingBufferMemory = pStagingBufferMemory.get(0);
-			long stagingBuffer = pStagingBuffer.get(0);
+			stagingVertexBufferMemory = pStagingBufferMemory.get(0);
+			stagingVertexBuffer = pStagingBuffer.get(0);
 			
-			PointerBuffer ppData = stack.callocPointer(1);
-			validate(VK10.vkMapMemory(device, stagingBufferMemory, 0, byteSize, 0, ppData));
-			
-			ShortBuffer memoryBuffer = MemoryUtil.memByteBuffer(ppData.get(0), byteSize).asShortBuffer();
-			addIndices(memoryBuffer);
-			VK10.vkUnmapMemory(device, stagingBufferMemory);
-			
-			LongBuffer pIndexBuffer = stack.callocLong(1);
-			LongBuffer pIndexBufferMemory = stack.callocLong(1);
-			createBuffer(byteSize, VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pIndexBuffer, pIndexBufferMemory);
-			indexBuffer = pIndexBuffer.get(0);
-			indexBufferMemory = pIndexBufferMemory.get(0);
-			
-			copyBuffer(stagingBuffer, indexBuffer, byteSize);
-			
-			VK10.vkDestroyBuffer(device, stagingBuffer, null);
-			VK10.vkFreeMemory(device, stagingBufferMemory, null);
+			createBuffer(indexByteSize, VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+					VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+					pStagingBuffer, pStagingBufferMemory);
+			stagingIndexBufferMemory = pStagingBufferMemory.get(0);
+			stagingIndexBuffer = pStagingBuffer.get(0);
 		}
+		
+		FloatBuffer verticesBuffer;
+		ShortBuffer indicesBuffer;
+		
+		try (MemoryStack stack = stackPush()){
+			PointerBuffer ppData = stack.mallocPointer(1);
+			
+			validate(VK10.vkMapMemory(device, stagingVertexBufferMemory, 0, vertexByteSize, 0, ppData));
+			long verticesAddress = ppData.get(0);
+			
+			validate(VK10.vkMapMemory(device, stagingIndexBufferMemory, 0, indexByteSize, 0, ppData));
+			long indicesAddress = ppData.get(0);
+			
+			verticesBuffer = MemoryUtil.memByteBuffer(verticesAddress, vertexByteSize).asFloatBuffer();
+			indicesBuffer = MemoryUtil.memByteBuffer(indicesAddress, indexByteSize).asShortBuffer();
+		}
+		
+		addModelData(verticesBuffer, indicesBuffer);
+		
+		VK10.vkUnmapMemory(device, stagingVertexBufferMemory);
+		VK10.vkUnmapMemory(device, stagingIndexBufferMemory);
+		
+		try (MemoryStack stack = stackPush()){
+			LongBuffer pBuffer = stack.mallocLong(1);
+			LongBuffer pBufferMemory = stack.mallocLong(1);
+			
+			createBuffer(vertexByteSize, 
+					VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
+					VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pBuffer, pBufferMemory);
+			vertexBuffer = pBuffer.get(0);
+			vertexBufferMemory = pBufferMemory.get(0);
+			
+			createBuffer(indexByteSize,
+					VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+					VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pBuffer, pBufferMemory);
+			indexBuffer = pBuffer.get(0);
+			indexBufferMemory = pBufferMemory.get(0);
+		}
+		
+		copyBuffer(stagingVertexBuffer, vertexBuffer, vertexByteSize);
+		copyBuffer(stagingIndexBuffer, indexBuffer, indexByteSize);
+		
+		VK10.vkDestroyBuffer(device, stagingVertexBuffer, null);
+		VK10.vkDestroyBuffer(device, stagingIndexBuffer, null);
+		
+		VK10.vkFreeMemory(device, stagingVertexBufferMemory, null);
+		VK10.vkFreeMemory(device, stagingIndexBufferMemory, null);
 	}
 	
 	void createUniformBuffers() {
@@ -1774,6 +1783,11 @@ public class TriangleTest {
 	static final int INDEX_COUNT = 12;
 	
 	static final int INDEX_TYPE_SIZE = 2;
+	
+	static void addModelData(FloatBuffer verticesBuffer, ShortBuffer indicesBuffer) {
+		addVertices(verticesBuffer);
+		addIndices(indicesBuffer);
+	}
 
 	byte[] readFile(String resourceName) {
 		try {
