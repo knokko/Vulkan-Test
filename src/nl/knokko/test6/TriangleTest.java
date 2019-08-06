@@ -899,7 +899,8 @@ public class TriangleTest {
 			rasterCI.polygonMode(VK10.VK_POLYGON_MODE_FILL);
 			rasterCI.lineWidth(1f);
 			
-			rasterCI.cullMode(VK10.VK_CULL_MODE_BACK_BIT);
+			// TODO Maybe re-enable hereafter?
+			rasterCI.cullMode(VK10.VK_CULL_MODE_NONE);
 			
 			rasterCI.frontFace(VK10.VK_FRONT_FACE_COUNTER_CLOCKWISE);
 			rasterCI.depthBiasEnable(false);
@@ -1702,24 +1703,20 @@ public class TriangleTest {
 	
 	static class UniformBufferObject {
 		
-		static final int MATRIX_COUNT = 3;
+		static final int MATRIX_COUNT = 1;
 		static final int MATRIX_FLOATS = 16;
 		
 		static final int FLOATS = MATRIX_COUNT * MATRIX_FLOATS;
 		static final int BYTES = FLOATS * Float.BYTES;
 		
-		Matrix4f model;
-		Matrix4f view;
-		Matrix4f proj;
+		Matrix4f matrix;
 		
 		UniformBufferObject(){
 			
 		}
 		
 		void put(FloatBuffer dest, int offset) {
-			model.get(offset, dest);
-			view.get(offset + MATRIX_FLOATS, dest);
-			proj.get(offset + 2 * MATRIX_FLOATS, dest);
+			matrix.get(offset, dest);
 			
 			// TODO Make sure that you apply all alignment rules of Vulkan! (It is now, but don't forget it later)
 		}
@@ -1769,9 +1766,10 @@ public class TriangleTest {
 	
 	static final int SUB_BRANCHES = 3;
 	static final int STEPS = 20;
-	static final int CORNERS = 10;
-	static final int BRANCHES = 5;
+	static final int CORNERS = 20;
+	static final int BRANCHES = 37;
 	static final float CORNER_ANGLE = (float) (2 * Math.PI / (CORNERS - 1));
+	static final float SIZE_FACTOR = 0.2f;
 	
 	static final int BRANCH_CALLS;
 	
@@ -1793,9 +1791,9 @@ public class TriangleTest {
 	static final int VERTEX_COUNT = STEPS * CORNERS * BRANCH_CALLS;
 	static final int INDEX_COUNT = 6 * (STEPS - 1) * (CORNERS - 1) * BRANCH_CALLS;
 	
-	static void addTreeBranch(VertexBuffer vertices, IndexBuffer indices, float startX, float startY, float startZ, 
-			Vector3f direction, float length, float radius, Random random, int numSubBranches) {
-		
+	static void addTreeBranch(VertexBuffer vertices, IndexBuffer indices, 
+			final float startX, final float startY, final float startZ, 
+			Vector3f direction, final float length, final float radius, Random random, final int numSubBranches) {
 		float stepSize = length / (STEPS - 1);
 		Vector3f step = direction.normalize(stepSize, new Vector3f());
 		
@@ -1811,6 +1809,7 @@ public class TriangleTest {
 			}
 			
 			perp = direction.cross(perpHelper, new Vector3f());
+			perp.normalize();
 		}
 		
 		float x = startX;
@@ -1863,7 +1862,7 @@ public class TriangleTest {
 						startX + direction.x * height + angleDirection.x * radius, 
 						startY + direction.y * height + angleDirection.y * radius, 
 						startZ + direction.z * height + angleDirection.z * radius, 
-						angleDirection, length * 0.3f, radius * 0.3f, random, numSubBranches - 1);
+						angleDirection, length * SIZE_FACTOR, radius * SIZE_FACTOR, random, numSubBranches - 1);
 			}
 		}
 	}
@@ -2065,12 +2064,14 @@ public class TriangleTest {
 		double seconds = elapsed / 1000000000.0;
 		
 		UniformBufferObject ubo = new UniformBufferObject();
-		ubo.model = new Matrix4f().identity().rotate((float) (seconds * 0.5 * Math.PI), new Vector3f(0f, 1f, 0f));
-		ubo.view = new Matrix4f().lookAt(new Vector3f(20f, 20f, 20f), new Vector3f(), new Vector3f(0f, 1f, 0f));
+		Matrix4f model = new Matrix4f().identity().rotate((float) (seconds * 0.5 * Math.PI), new Vector3f(0f, 1f, 0f));
+		Matrix4f view = new Matrix4f().lookAt(new Vector3f(20f, 20f, 20f), new Vector3f(), new Vector3f(0f, 1f, 0f));
 		
 		// Scale because Vulkan is not the same as OpenGL, that's also why the true at the end is needed
-		ubo.proj = new Matrix4f().scale(1, -1, 1).perspective((float) (0.15 * Math.PI), 
+		Matrix4f proj = new Matrix4f().scale(1, -1, 1).perspective((float) (0.15 * Math.PI), 
 				swapchainImageExtent.width() / (float) swapchainImageExtent.height(), 0.1f, 100f, true);
+		
+		ubo.matrix = proj.mul(view).mul(model);
 		
 		PointerBuffer ppData = stack.callocPointer(1);
 		validate(VK10.vkMapMemory(device, uniformBuffersMemory.get(imageIndex), 0, UniformBufferObject.BYTES, 0, ppData));
